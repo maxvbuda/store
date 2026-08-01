@@ -116,18 +116,34 @@ def ensure(headless: bool):
         # the Node server notices and spawns a fresh sidecar.
         print("fatal: playwright would not start (%s) — exiting for a respawn" % e, flush=True)
         os._exit(3)
-    state["ctx"] = state["pw"].chromium.launch_persistent_context(
-        user_data_dir=str(PROFILE),
-        headless=headless,
-        viewport={"width": 1280, "height": 800},
-        args=["--disable-blink-features=AutomationControlled"],
-    )
+    try:
+        state["ctx"] = _launch(headless)
+    except Exception as e:
+        msg = str(e)
+        if "Executable doesn't exist" in msg or "playwright install" in msg:
+            # Without this, the retry path trips Playwright's asyncio guard and
+            # reports "Sync API inside the asyncio loop", which is nonsense here.
+            teardown()
+            raise RuntimeError(
+                "Chromium is not installed for Playwright. Run:  "
+                "python3 -m playwright install chromium") from None
+        teardown()
+        raise
     state["page"] = state["ctx"].pages[0] if state["ctx"].pages else state["ctx"].new_page()
     try:
         state["page"].goto(START_URL, wait_until="domcontentloaded", timeout=30000)
     except Exception:
         pass
     return state["page"]
+
+
+def _launch(headless: bool):
+    return state["pw"].chromium.launch_persistent_context(
+        user_data_dir=str(PROFILE),
+        headless=headless,
+        viewport={"width": 1280, "height": 800},
+        args=["--disable-blink-features=AutomationControlled"],
+    )
 
 
 class Handler(BaseHTTPRequestHandler):
