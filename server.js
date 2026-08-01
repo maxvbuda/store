@@ -367,6 +367,17 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// Two servers on one port is the fault behind most "503 / stuck starting"
+// reports: the second one keeps respawning a sidecar that can never bind.
+server.on('error', (e) => {
+  if (e.code === 'EADDRINUSE') {
+    console.error('\n  Port ' + PORT + ' is already in use — another copy of this server is running.');
+    console.error('  Stop it first:   lsof -ti tcp:' + PORT + ' | xargs kill\n');
+    process.exit(1);
+  }
+  throw e;
+});
+
 server.listen(PORT, HOST, () => {
   const key = apiKey();
   console.log('AutoStore AI  →  http://localhost:' + PORT);

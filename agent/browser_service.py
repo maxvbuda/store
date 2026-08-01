@@ -25,7 +25,9 @@ except ImportError:
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROFILE = pathlib.Path(os.environ.get("BROWSER_PROFILE", ROOT / ".data" / "browser-profile"))
-START_URL = os.environ.get("BROWSER_START_URL", "https://admin.shopify.com/")
+# Blank by default: admin.shopify.com lands on a Cloudflare bot check, which
+# has no readable controls, so the agent would start out blind.
+START_URL = os.environ.get("BROWSER_START_URL", "about:blank")
 
 lock = threading.Lock()
 state = {"ctx": None, "page": None, "pw": None}
@@ -78,12 +80,42 @@ ELEMENTS_JS = r"""
 """
 
 
+def teardown():
+    """Release Chromium AND the Playwright driver. Nulling the handles without
+    calling stop() leaves the driver's event loop registered in this thread, and
+    the next sync_playwright().start() dies with 'Sync API inside the asyncio
+    loop'."""
+    for key, close in (("ctx", "close"), ("pw", "stop")):
+        obj = state.get(key)
+        if obj is not None:
+            try:
+                getattr(obj, close)()
+            except Exception:
+                pass
+    state.update(ctx=None, page=None, pw=None)
+
+
 def ensure(headless: bool):
     """Start Chromium once; reuse it afterwards."""
     if state["page"] is not None:
         return state["page"]
     PROFILE.mkdir(parents=True, exist_ok=True)
-    state["pw"] = sync_playwright().start()
+    # A hard-killed Chromium leaves Singleton* behind and the next launch hangs
+    # or refuses. Nothing else is using this profile — we are the only user.
+    for lockname in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+        try:
+            (PROFILE / lockname).unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+    try:
+        state["pw"] = sync_playwright().start()
+    except Exception as e:
+        # The driver is wedged beyond repair in this process. Exiting is clean:
+        # the Node server notices and spawns a fresh sidecar.
+        print("fatal: playwright would not start (%s) — exiting for a respawn" % e, flush=True)
+        os._exit(3)
     state["ctx"] = state["pw"].chromium.launch_persistent_context(
         user_data_dir=str(PROFILE),
         headless=headless,
@@ -156,10 +188,18 @@ class Handler(BaseHTTPRequestHandler):
                 with lock:
                     page = state["page"]
                     if page is None:
-                        return self._json(200, {"running": False})
+                        return self._json(200, {"running": False, "healthy": False})
+                    try:
+                        # Touch the page: if Chromium died under us, this raises
+                        # and we report unhealthy so the parent can restart us.
+                        url, title = page.url, page.title()
+                    except Exception as e:
+                        teardown()
+                        return self._json(200, {"running": False, "healthy": False,
+                                                "error": str(e)[:160]})
                     return self._json(200, {
-                        "running": True, "url": page.url,
-                        "title": page.title(), "profile": str(PROFILE),
+                        "running": True, "healthy": True, "url": url,
+                        "title": title, "profile": str(PROFILE),
                     })
             return self._json(404, {"error": "unknown endpoint"})
         except Exception as e:
@@ -196,11 +236,7 @@ class Handler(BaseHTTPRequestHandler):
                     page.go_back(wait_until="domcontentloaded", timeout=30000)
 
                 elif path == "/shutdown":
-                    if state["ctx"]:
-                        state["ctx"].close()
-                    if state["pw"]:
-                        state["pw"].stop()
-                    state.update(ctx=None, page=None, pw=None)
+                    teardown()
                     return self._json(200, {"ok": True, "running": False})
 
                 else:
