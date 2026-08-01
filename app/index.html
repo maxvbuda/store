@@ -820,8 +820,8 @@ class Component extends DCLogic {
       if (e.toast) this.toast(e.toast.title, e.toast.body);
     }, 9000);
 
-    // Monthly billing check for auto-renewal
-    this.billingCheck = setInterval(() => {
+    // Monthly service renewal check for auto-renewal
+    this.serviceCheck = setInterval(() => {
       const st = this.state;
       if (st.isSubscribed) {
         const lastBilling = localStorage.getItem('lastBillingDate');
@@ -925,7 +925,7 @@ class Component extends DCLogic {
     this.toast('Signed out', 'See you next time.');
   }
 
-  componentWillUnmount() { clearInterval(this.clock); clearInterval(this.ticker); clearInterval(this.billingCheck); clearInterval(this.trialCheck); }
+  componentWillUnmount() { clearInterval(this.clock); clearInterval(this.ticker); clearInterval(this.serviceCheck); clearInterval(this.trialCheck); }
 
   componentDidUpdate() { this.save(); }
 
