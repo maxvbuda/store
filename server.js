@@ -176,7 +176,21 @@ async function handleLLM(req, res) {
   const model = String(body.model || '').trim() || await pickModel();
   const messages = [];
   if (body.system) messages.push({ role: 'system', content: String(body.system).slice(0, 8000) });
-  messages.push({ role: 'user', content: prompt });
+
+  // `images` (data: URLs) turns this into a vision call — that's how the
+  // computer-use loop shows the model what's on screen.
+  const images = Array.isArray(body.images) ? body.images.slice(0, 4) : [];
+  if (images.length) {
+    messages.push({
+      role: 'user',
+      content: [
+        { type: 'text', text: prompt },
+        ...images.map(u => ({ type: 'image_url', image_url: { url: String(u) } })),
+      ],
+    });
+  } else {
+    messages.push({ role: 'user', content: prompt });
+  }
 
   // Reasoning models (DeepSeek V4 Pro, o-series, R1, …) spend max_tokens on
   // chain-of-thought before emitting a single output token. With a tight cap
@@ -283,6 +297,11 @@ async function handleCheckStore(req, res) {
 
 // Accounts + the shared-password gate.
 const auth = require('./lib/auth').create(env, send, readBody);
+// The agent's Chromium (Python sidecar, spawned on first use).
+const browser = require('./lib/browser').create(env, send, readBody);
+process.on('exit', () => browser.stop());
+process.on('SIGINT', () => { browser.stop(); process.exit(0); });
+process.on('SIGTERM', () => { browser.stop(); process.exit(0); });
 
 const UNLOCK_PAGE = `<!doctype html><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>AutoStore AI</title>
@@ -323,6 +342,12 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname.startsWith('/api/account/')) {
       if (await auth.handle(req, res, url)) return;
+    }
+    if (url.pathname.startsWith('/api/browser/')) {
+      if (await browser.handle(req, res, url)) return;
+    }
+    if (url.pathname === '/browser' || url.pathname === '/browser/') {
+      return serveStatic(req, res, '/browser.html');
     }
 
     // The template ships no favicon; answer once instead of logging a 404.
