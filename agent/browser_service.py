@@ -18,10 +18,34 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-try:
-    from playwright.sync_api import sync_playwright
-except ImportError:
-    sys.exit("playwright is not installed:  python3 -m pip install playwright")
+# Driver choice matters for bot detection. Patchright is a drop-in Playwright
+# replacement that removes the tells plain Playwright leaves behind (CDP
+# artefacts, Runtime.enable, navigator.webdriver), which is what trips
+# Cloudflare / reCAPTCHA on sites like the Shopify admin. Fall back to stock
+# Playwright + playwright_stealth if patchright is unavailable.
+# patchright is the stronger anti-detection driver in principle, but its
+# Chromium exits on its own within seconds on this machine, so stock
+# Playwright + playwright_stealth (what Crawl4AI's StealthAdapter uses) is
+# the default. Set BROWSER_DRIVER=patchright to try it again.
+DRIVER = os.environ.get("BROWSER_DRIVER", "playwright").lower()
+_stealth = None
+
+if DRIVER == "patchright":
+    try:
+        from patchright.sync_api import sync_playwright
+    except ImportError:
+        DRIVER = "playwright"
+
+if DRIVER != "patchright":
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        sys.exit("no browser driver:  python3 -m pip install patchright playwright")
+    try:
+        from playwright_stealth import Stealth
+        _stealth = Stealth()
+    except ImportError:
+        pass
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROFILE = pathlib.Path(os.environ.get("BROWSER_PROFILE", ROOT / ".data" / "browser-profile"))
@@ -130,6 +154,11 @@ def ensure(headless: bool):
         teardown()
         raise
     state["page"] = state["ctx"].pages[0] if state["ctx"].pages else state["ctx"].new_page()
+    if _stealth is not None:
+        try:
+            _stealth.apply_stealth_sync(state["page"])
+        except Exception:
+            pass
     try:
         state["page"].goto(START_URL, wait_until="domcontentloaded", timeout=30000)
     except Exception:
@@ -138,12 +167,26 @@ def ensure(headless: bool):
 
 
 def _launch(headless: bool):
-    return state["pw"].chromium.launch_persistent_context(
+    # channel="chrome" uses the real Google Chrome you have installed, which is
+    # far less detectable than the bundled Chromium build. Falls back if absent.
+    kwargs = dict(
         user_data_dir=str(PROFILE),
         headless=headless,
         viewport={"width": 1280, "height": 800},
-        args=["--disable-blink-features=AutomationControlled"],
+        no_viewport=False,
     )
+    # NOT "chrome" by default: if the user already has Google Chrome open,
+    # a second Chrome with a different profile delegates to the running
+    # instance and exits, leaving a dead page and blank screenshots.
+    # Patchright's stealth comes from its patches, not from the channel.
+    channel = os.environ.get("BROWSER_CHANNEL", "")
+    if channel and channel != "chromium":
+        try:
+            return state["pw"].chromium.launch_persistent_context(channel=channel, **kwargs)
+        except Exception as e:
+            print("channel %r unavailable (%s) — using bundled chromium"
+                  % (channel, str(e)[:80]), flush=True)
+    return state["pw"].chromium.launch_persistent_context(**kwargs)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -287,7 +330,7 @@ def main():
     HTTPServer.allow_reuse_address = True
     srv = HTTPServer(("127.0.0.1", args.port), Handler)
     srv.headless = args.headless          # single-threaded on purpose: sync Playwright
-    print(f"browser service on 127.0.0.1:{args.port}  profile={PROFILE}", flush=True)
+    print(f"browser service on 127.0.0.1:{args.port}  driver={DRIVER}  profile={PROFILE}", flush=True)
     srv.serve_forever()
 
 
