@@ -30,6 +30,53 @@ START_URL = os.environ.get("BROWSER_START_URL", "https://admin.shopify.com/")
 lock = threading.Lock()
 state = {"ctx": None, "page": None, "pw": None}
 
+# Runs in the page. Returns the visible interactive controls with their centre
+# coordinates, plus the readable text — enough for a text-only model to decide
+# what to do without ever seeing a picture.
+ELEMENTS_JS = r"""
+() => {
+  const SEL = 'a[href], button, input, select, textarea, [role=button], [role=link], [role=tab], [onclick]';
+  const seen = new Set();
+  const items = [];
+  for (const el of document.querySelectorAll(SEL)) {
+    const r = el.getBoundingClientRect();
+    if (r.width < 4 || r.height < 4) continue;
+    if (r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) continue;
+    const cs = getComputedStyle(el);
+    if (cs.visibility === 'hidden' || cs.display === 'none' || Number(cs.opacity) < 0.05) continue;
+
+    let label = (el.getAttribute('aria-label') || el.innerText || el.value ||
+                 el.getAttribute('placeholder') || el.getAttribute('title') || '').trim();
+    label = label.replace(/\s+/g, ' ').slice(0, 90);
+    const kind = el.tagName.toLowerCase() +
+                 (el.type ? ':' + el.type : '') +
+                 (el.getAttribute('role') ? '[' + el.getAttribute('role') + ']' : '');
+    if (!label && !['input', 'textarea', 'select'].includes(el.tagName.toLowerCase())) continue;
+
+    const key = kind + '|' + label + '|' + Math.round(r.x) + ',' + Math.round(r.y);
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    items.push({
+      i: items.length,
+      kind,
+      label,
+      x: Math.round(r.x + r.width / 2),
+      y: Math.round(r.y + r.height / 2),
+      editable: ['input', 'textarea', 'select'].includes(el.tagName.toLowerCase()),
+    });
+    if (items.length >= 120) break;
+  }
+  const text = (document.body ? document.body.innerText : '').replace(/\n{3,}/g, '\n\n').slice(0, 6000);
+  return {
+    url: location.href, title: document.title,
+    scrollY: Math.round(scrollY), scrollHeight: Math.round(document.body.scrollHeight),
+    viewport: {w: innerWidth, h: innerHeight},
+    elements: items, text,
+  };
+}
+"""
+
 
 def ensure(headless: bool):
     """Start Chromium once; reuse it afterwards."""
@@ -98,6 +145,13 @@ class Handler(BaseHTTPRequestHandler):
                     page = ensure(self.server.headless)
                     shot = page.screenshot(type="png")
                 return self._png(shot)
+            if self.path.startswith("/elements"):
+                # A text description of what's on the page. This is how a
+                # text-only model (DeepSeek) "sees" — no screenshot needed.
+                with lock:
+                    page = ensure(self.server.headless)
+                    data = page.evaluate(ELEMENTS_JS)
+                return self._json(200, data)
             if self.path.startswith("/state"):
                 with lock:
                     page = state["page"]

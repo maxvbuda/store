@@ -31,13 +31,9 @@ const OPENROUTER = 'https://openrouter.ai/api/v1';
 // Preference order used when OPENROUTER_MODEL is not set. The first one the
 // account can actually see in /models wins.
 const MODEL_PREFERENCE = [
-  'anthropic/claude-opus-4.5',
-  'anthropic/claude-sonnet-4.5',
-  'anthropic/claude-3.7-sonnet',
-  'anthropic/claude-3.5-sonnet',
-  'openai/gpt-4o-mini',
-  'google/gemini-2.0-flash-001',
-  'meta-llama/llama-3.3-70b-instruct',
+  'deepseek/deepseek-v4-pro',
+  'deepseek/deepseek-v4-flash',
+  'deepseek/deepseek-v3.2',
 ];
 
 // ---------------------------------------------------------------- .env
@@ -346,8 +342,13 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/browser/')) {
       if (await browser.handle(req, res, url)) return;
     }
-    if (url.pathname === '/browser' || url.pathname === '/browser/') {
-      return serveStatic(req, res, '/browser.html');
+    // The agent console is the start page now. The original store app — login,
+    // products, marketing, support — still lives at /app.
+    if (url.pathname === '/' || url.pathname === '/browser' || url.pathname === '/browser/') {
+      return serveStatic(req, res, '/console.html');
+    }
+    if (url.pathname === '/app' || url.pathname === '/app/') {
+      return serveStatic(req, res, '/index.html');
     }
 
     // The template ships no favicon; answer once instead of logging a 404.

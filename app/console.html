@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AutoStore AI — agent console</title>
+<style>
+  @font-face{font-family:Archivo;font-style:normal;font-weight:400;font-display:swap;
+    src:url("fonts/archivo-latin.woff2") format('woff2')}
+  :root{
+    --bg:#f4f4f2; --panel:#fff; --ink:#111; --muted:#6b6b68;
+    --line:#e2e2de; --accent:#ec3013; --head:Archivo,-apple-system,BlinkMacSystemFont,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    display:flex;flex-direction:column}
+
+  /* ---------- header ---------- */
+  header{display:flex;align-items:center;gap:14px;padding:0 16px;height:52px;
+    background:var(--ink);color:#fff;flex:none}
+  .brand{font-family:var(--head);font-weight:800;letter-spacing:.02em;font-size:15px}
+  .brand i{color:var(--accent);font-style:normal}
+  .chip{display:flex;align-items:center;gap:7px;font-family:var(--head);font-weight:700;
+    font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#c9c9c4}
+  .dot{width:8px;height:8px;background:#555;border-radius:50%}
+  .dot.on{background:#3ddc84}
+  .dot.busy{background:var(--accent);animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.25}}
+  header .sp{flex:1}
+  header a,header button{font-family:var(--head);font-weight:700;font-size:11px;
+    letter-spacing:.06em;text-transform:uppercase;color:#c9c9c4;background:none;
+    border:0;cursor:pointer;text-decoration:none;padding:6px 2px}
+  header a:hover,header button:hover{color:#fff}
+
+  /* ---------- layout ---------- */
+  main{flex:1;display:grid;grid-template-rows:minmax(320px,1fr) minmax(210px,290px);
+    gap:12px;padding:12px;min-height:0}
+  .top{display:grid;grid-template-columns:1fr 300px;gap:12px;min-height:0}
+  .bottom{display:grid;grid-template-columns:1fr 1fr;gap:12px;min-height:0}
+  .card{background:var(--panel);border:1px solid var(--line);display:flex;
+    flex-direction:column;min-height:0;min-width:0}
+  .card > h2{margin:0;padding:9px 13px;border-bottom:1px solid var(--line);
+    font-family:var(--head);font-weight:800;font-size:11px;letter-spacing:.09em;
+    text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:9px;flex:none}
+  .card > .body{flex:1;overflow:auto;min-height:0}
+
+  /* ---------- browser ---------- */
+  .urlbar{display:flex;gap:8px;padding:8px 10px;border-bottom:1px solid var(--line);flex:none}
+  .urlbar input{flex:1;padding:7px 10px;border:1px solid var(--line);font:13px/1.4 inherit;min-width:0}
+  .urlbar button{padding:7px 11px;border:1px solid var(--line);background:var(--bg);
+    cursor:pointer;font-size:12px;white-space:nowrap}
+  #stage{position:relative;flex:1;background:#fbfbfa;line-height:0;overflow:auto;min-height:0}
+  #screen{width:100%;display:block;cursor:crosshair}
+  #veil{position:absolute;inset:0;display:grid;place-items:center;text-align:center;
+    background:rgba(251,251,250,.94);color:var(--muted);font-size:13px;line-height:1.6;padding:24px}
+
+  /* ---------- agent panel ---------- */
+  .working{padding:13px}
+  .working .now{font-family:var(--head);font-weight:800;font-size:15px;line-height:1.3;margin:0 0 4px}
+  .working .sub{color:var(--muted);font-size:12.5px;margin:0 0 14px}
+  .bar{height:3px;background:var(--line);overflow:hidden;margin-bottom:14px}
+  .bar i{display:block;height:100%;width:30%;background:var(--accent);
+    animation:slide 1.3s ease-in-out infinite}
+  @keyframes slide{0%{margin-left:-30%}100%{margin-left:100%}}
+  .kv{display:flex;justify-content:space-between;gap:10px;padding:6px 0;
+    border-top:1px solid var(--line);font-size:12.5px}
+  .kv span:first-child{color:var(--muted)}
+  .kv span:last-child{text-align:right;word-break:break-word}
+
+  /* ---------- requests ---------- */
+  .req{padding:12px;display:flex;flex-direction:column;gap:9px;height:100%}
+  textarea{width:100%;flex:1;min-height:64px;padding:10px;border:1px solid var(--line);
+    font:14px/1.5 inherit;resize:none}
+  .row{display:flex;gap:9px;align-items:center;flex:none}
+  .go{padding:9px 18px;border:0;background:var(--accent);color:#fff;cursor:pointer;
+    font-family:var(--head);font-weight:800;font-size:13px;letter-spacing:.02em}
+  .go:disabled{opacity:.45;cursor:default}
+  .ghost{padding:9px 13px;border:1px solid var(--line);background:var(--bg);cursor:pointer;font-size:12.5px}
+  .hint{color:var(--muted);font-size:12px;margin:0}
+  .hint b{color:var(--ink);font-weight:600}
+  .examples{display:flex;flex-wrap:wrap;gap:6px}
+  .examples button{border:1px solid var(--line);background:var(--bg);padding:4px 9px;
+    font-size:12px;cursor:pointer;color:var(--muted)}
+  .examples button:hover{color:var(--ink);border-color:var(--muted)}
+
+  /* ---------- updates ---------- */
+  #log{padding:2px 13px 13px}
+  #log .e{padding:9px 0;border-bottom:1px solid var(--line);font-size:13px}
+  #log .e:last-child{border-bottom:0}
+  #log .n{display:inline-block;min-width:20px;color:var(--muted);
+    font-variant-numeric:tabular-nums;font-size:11px}
+  #log .a{font-family:var(--head);font-weight:800;font-size:11px;letter-spacing:.07em;
+    text-transform:uppercase;color:var(--accent);margin-right:7px}
+  #log .goal{background:var(--bg);padding:9px 11px;margin:9px 0;border-left:3px solid var(--accent)}
+  #log .done{background:#f2fbf5;padding:9px 11px;margin:9px 0;border-left:3px solid #1f9d55}
+  #log .err{background:#fdf2f0;padding:9px 11px;margin:9px 0;border-left:3px solid var(--accent)}
+  .empty{color:var(--muted);font-size:13px;padding:13px}
+
+  @media (max-width:900px){
+    main{grid-template-rows:auto auto}
+    .top{grid-template-columns:1fr}
+    .bottom{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="brand">AUTOSTORE <i>AI</i></span>
+  <span class="chip"><span class="dot" id="dot"></span><span id="statusText">connecting</span></span>
+  <span class="sp"></span>
+  <span class="chip" id="modelChip"></span>
+  <button id="stopBrowser">Restart browser</button>
+  <a href="/app">Full app →</a>
+</header>
+
+<main>
+  <!-- ================= TOP: browser + agent ================= -->
+  <section class="top">
+    <div class="card">
+      <div class="urlbar">
+        <input id="url" placeholder="admin.shopify.com — press Enter to open">
+        <button id="back">Back</button>
+        <button id="reload">Reload</button>
+      </div>
+      <div id="stage">
+        <img id="screen" alt="the agent's browser">
+        <div id="veil">Starting Chromium…<br><small>the first launch takes a few seconds</small></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Agent</h2>
+      <div class="body working">
+        <p class="now" id="nowDoing">Idle</p>
+        <p class="sub" id="nowSub">Give it something to do below.</p>
+        <div class="bar" id="bar" style="display:none"><i></i></div>
+        <div class="kv"><span>Step</span><span id="kStep">—</span></div>
+        <div class="kv"><span>Page</span><span id="kTitle">—</span></div>
+        <div class="kv"><span>URL</span><span id="kUrl">—</span></div>
+        <div class="kv"><span>Signed in</span><span id="kAuth">you control this browser</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= BOTTOM: requests + updates ================= -->
+  <section class="bottom">
+    <div class="card">
+      <h2>Requests</h2>
+      <div class="body req">
+        <textarea id="goal" placeholder="Tell the agent what to do in the browser…"></textarea>
+        <div class="examples">
+          <button data-ex="Go to my Shopify admin and tell me how many orders are awaiting fulfilment.">orders awaiting fulfilment</button>
+          <button data-ex="Open the Products page and list any product with fewer than 10 units in stock.">low stock</button>
+          <button data-ex="Find the store's current shipping rates and summarise them.">shipping rates</button>
+        </div>
+        <div class="row">
+          <button class="go" id="run">Run agent</button>
+          <button class="ghost" id="halt" disabled>Stop</button>
+          <span class="hint">max <input id="steps" type="number" value="12" min="1" max="40"
+            style="width:50px;padding:4px;border:1px solid var(--line)"> steps</span>
+        </div>
+        <p class="hint"><b>Log in first:</b> click and type straight onto the browser above —
+        it's real. The agent won't enter credentials for you.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Agent updates</h2>
+      <div class="body"><div id="log"><div class="empty">Nothing yet.</div></div></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let running = false, halted = false, shotBusy = false, model = null;
+
+/* ------------------------------------------------------------ updates */
+
+function log(html, cls) {
+  const empty = $('log').querySelector('.empty');
+  if (empty) empty.remove();
+  const d = document.createElement('div');
+  d.className = cls || 'e';
+  d.innerHTML = html;
+  $('log').prepend(d);
+}
+const esc = s => String(s == null ? '' : s)
+  .replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function doing(now, sub, busy) {
+  $('nowDoing').textContent = now;
+  $('nowSub').textContent = sub || '';
+  $('bar').style.display = busy ? 'block' : 'none';
+  $('dot').className = 'dot ' + (busy ? 'busy' : (shotOK ? 'on' : ''));
+  $('statusText').textContent = busy ? 'working' : (shotOK ? 'ready' : 'offline');
+}
+
+/* ------------------------------------------------------------ live view */
+
+let shotOK = false;
+async function refresh() {
+  if (shotBusy) return;
+  shotBusy = true;
+  try {
+    const r = await fetch('/api/browser/screenshot?t=' + Date.now());
+    if (!r.ok) throw new Error('screenshot ' + r.status);
+    const blob = await r.blob();
+    const prev = $('screen').src;
+    $('screen').src = URL.createObjectURL(blob);
+    if (prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+    $('veil').style.display = 'none';
+    shotOK = true;
+    if (!running) { $('dot').className = 'dot on'; $('statusText').textContent = 'ready'; }
+  } catch (e) {
+    shotOK = false;
+    if (!running) { $('dot').className = 'dot'; $('statusText').textContent = 'offline'; }
+  } finally { shotBusy = false; }
+}
+
+async function syncState() {
+  try {
+    const s = await (await fetch('/api/browser/status')).json();
+    if (s.model && !model) { model = s.model; $('modelChip').textContent = 'model · ' + model.split('/').pop(); }
+    const st = s.state || {};
+    $('kTitle').textContent = st.title || '—';
+    $('kUrl').textContent = st.url ? st.url.replace(/^https?:\/\//, '').slice(0, 44) : '—';
+  } catch (e) {}
+}
+setInterval(refresh, 1200);
+setInterval(syncState, 4000);
+refresh(); syncState();
+
+/* ------------------------------------------------------- browser control */
+
+async function act(path, body) {
+  const r = await fetch('/api/browser/' + path, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body || {}),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+  refresh();
+  return data;
+}
+
+$('screen').addEventListener('click', ev => {
+  const img = $('screen'), rect = img.getBoundingClientRect();
+  if (!img.naturalWidth) return;
+  const x = Math.round((ev.clientX - rect.left) * (img.naturalWidth / rect.width));
+  const y = Math.round((ev.clientY - rect.top) * (img.naturalHeight / rect.height));
+  act('click', {x, y}).catch(e => log('<span class="a">error</span>' + esc(e.message), 'e err'));
+});
+$('screen').addEventListener('wheel', ev => {
+  ev.preventDefault();
+  act('scroll', {dy: ev.deltaY, settle: 180}).catch(() => {});
+}, {passive:false});
+
+document.addEventListener('keydown', ev => {
+  if (['INPUT','TEXTAREA'].includes(ev.target.tagName)) return;
+  if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  const special = {Enter:'Enter',Tab:'Tab',Backspace:'Backspace',Escape:'Escape',
+                   ArrowUp:'ArrowUp',ArrowDown:'ArrowDown',ArrowLeft:'ArrowLeft',ArrowRight:'ArrowRight'};
+  if (special[ev.key]) { ev.preventDefault(); act('key', {key: special[ev.key]}).catch(()=>{}); }
+  else if (ev.key.length === 1) { ev.preventDefault(); act('type', {text: ev.key, settle: 110}).catch(()=>{}); }
+});
+
+$('url').addEventListener('keydown', async ev => {
+  if (ev.key !== 'Enter') return;
+  const u = $('url').value.trim(); if (!u) return;
+  log('<span class="a">open</span>' + esc(u));
+  try { await act('goto', {url: u}); } catch (e) { log('<span class="a">error</span>' + esc(e.message), 'e err'); }
+});
+$('back').onclick = () => act('back').catch(()=>{});
+$('reload').onclick = () => refresh();
+$('stopBrowser').onclick = async () => {
+  await fetch('/api/browser/stop', {method:'POST'});
+  $('veil').style.display = 'grid';
+  $('veil').textContent = 'Browser stopped — it restarts on the next action.';
+  log('<span class="a">browser</span>stopped');
+};
+
+/* ------------------------------------------------------------ the loop */
+
+// DeepSeek is text-only, so the agent reads the page's interactive elements
+// and visible text instead of a screenshot. It picks a control by index.
+const SYSTEM = `You operate a web browser to accomplish a goal.
+
+Each turn you receive the page URL, its visible text, and a numbered list of the
+interactive controls currently on screen.
+
+Reply with ONE action as strict JSON and nothing else:
+  {"action":"click","index":<n>,"why":"..."}
+  {"action":"type","index":<n>,"text":"...","why":"..."}   // clicks the field first
+  {"action":"key","key":"Enter","why":"..."}
+  {"action":"scroll","dy":600,"why":"..."}
+  {"action":"goto","url":"https://...","why":"..."}
+  {"action":"done","answer":"what you found or did","why":"..."}
+
+Rules:
+- "index" must be a number from the control list. Never invent one.
+- If what you need is not listed, scroll to reveal more before giving up.
+- The answer is often already in the page text — if so, reply done immediately.
+- If a sign-in or password screen is shown, do NOT attempt to log in. Reply done
+  and state that a human must sign in first.
+- When the goal is met, reply done with the answer.`;
+
+async function readPage() {
+  const r = await fetch('/api/browser/elements');
+  if (!r.ok) throw new Error('could not read the page (' + r.status + ')');
+  return await r.json();
+}
+
+function describe(p) {
+  const list = (p.elements || [])
+    .map(e => `[${e.i}] ${e.kind}${e.editable ? ' (editable)' : ''} "${e.label}"`)
+    .join('\n') || '(no interactive controls found)';
+  const scrolled = p.scrollHeight > p.viewport.h
+    ? `\nScroll: ${p.scrollY} of ${p.scrollHeight - p.viewport.h} (more below)` : '';
+  return `URL: ${p.url}\nTitle: ${p.title}${scrolled}\n\nControls:\n${list}\n\nPage text:\n${(p.text || '').slice(0, 3500)}`;
+}
+
+document.querySelectorAll('.examples button').forEach(b => {
+  b.onclick = () => { $('goal').value = b.dataset.ex; $('goal').focus(); };
+});
+$('halt').onclick = () => { halted = true; doing('Stopping…', 'finishing the current step', true); };
+
+$('run').onclick = async () => {
+  const goal = $('goal').value.trim();
+  if (!goal || running) return;
+  running = true; halted = false;
+  $('run').disabled = true; $('halt').disabled = false;
+  const max = Math.max(1, Math.min(40, Number($('steps').value) || 12));
+  log('<b>Goal</b><br>' + esc(goal), 'e goal');
+
+  const history = [];
+  try {
+    for (let i = 1; i <= max && !halted; i++) {
+      $('kStep').textContent = i + ' / ' + max;
+      doing('Reading the page…', 'step ' + i, true);
+      const pageInfo = await readPage();
+
+      doing('Thinking…', 'step ' + i + ' · ' + (model || 'model'), true);
+      const r = await fetch('/api/llm', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          system: SYSTEM,
+          prompt: 'Goal: ' + goal + '\n\n' + describe(pageInfo) +
+                  (history.length ? '\n\nActions so far:\n' + history.join('\n') : '') +
+                  '\n\nWhat is your next single action? JSON only.',
+          model: model || undefined, max_tokens: 900, temperature: 0.2,
+        }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+
+      let step;
+      const m = String(data.text).match(/\{[\s\S]*\}/);
+      try { step = JSON.parse(m ? m[0] : data.text); }
+      catch (e) { log('<span class="a">unreadable</span>' + esc(String(data.text).slice(0,180)), 'e err'); break; }
+
+      log('<span class="n">' + i + '</span><span class="a">' + esc(step.action) + '</span>' +
+          esc((step.why || '').slice(0, 150)));
+      history.push(i + '. ' + JSON.stringify(step));
+
+      if (step.action === 'done') {
+        log('<b>Done</b><br>' + esc(step.answer || ''), 'e done');
+        doing('Done', (step.answer || '').slice(0, 90), false);
+        break;
+      }
+      doing('Acting: ' + step.action, (step.why || '').slice(0, 80), true);
+
+      // Resolve an element index back to real coordinates.
+      const byIndex = n => (pageInfo.elements || []).find(e => e.i === Number(n));
+
+      if (step.action === 'click' || step.action === 'type') {
+        const el = byIndex(step.index);
+        if (!el && step.index !== undefined) {
+          log('<span class="a">bad index</span>no control numbered ' + esc(step.index), 'e err');
+          history.push(i + '. ERROR: index ' + step.index + ' does not exist');
+          continue;
+        }
+        if (el) await act('click', {x: el.x, y: el.y});
+        else if (step.x !== undefined) await act('click', {x: step.x, y: step.y});
+        if (step.action === 'type') await act('type', {text: step.text || ''});
+      }
+      else if (step.action === 'key')    await act('key',    {key: step.key || 'Enter'});
+      else if (step.action === 'scroll') await act('scroll', {dy: step.dy || 600});
+      else if (step.action === 'goto')   await act('goto',   {url: step.url || ''});
+      else { log('<span class="a">unknown</span>' + esc(step.action), 'e err'); break; }
+
+      if (i === max) doing('Step limit reached', 'raise the limit and run again', false);
+    }
+  } catch (e) {
+    log('<b>Failed</b><br>' + esc(e.message), 'e err');
+    doing('Failed', String(e.message).slice(0, 90), false);
+  } finally {
+    running = false; halted = false;
+    $('run').disabled = false; $('halt').disabled = true;
+    $('kStep').textContent = '—';
+    if ($('nowDoing').textContent.startsWith('Acting') ||
+        $('nowDoing').textContent.startsWith('Thinking') ||
+        $('nowDoing').textContent.startsWith('Looking') ||
+        $('nowDoing').textContent === 'Stopping…') doing('Idle', 'Give it something to do below.', false);
+  }
+};
+</script>
+</body>
+</html>
