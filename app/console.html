@@ -97,6 +97,13 @@
   #log .done{background:#f2fbf5;padding:9px 11px;margin:9px 0;border-left:3px solid #1f9d55}
   #log .err{background:#fdf2f0;padding:9px 11px;margin:9px 0;border-left:3px solid var(--accent)}
   .empty{color:var(--muted);font-size:13px;padding:13px}
+  details#briefBox{flex:none;border:1px solid var(--line);background:var(--bg)}
+  details#briefBox summary{cursor:pointer;padding:7px 10px;font-size:12.5px;color:var(--muted);
+    font-family:var(--head);font-weight:700;letter-spacing:.03em}
+  details#briefBox[open] summary{border-bottom:1px solid var(--line)}
+  details#briefBox textarea{min-height:120px;border:0;background:var(--panel)}
+  details#briefBox .row{padding:8px 10px}
+  #log .human{background:#fff8e6;padding:9px 11px;margin:9px 0;border-left:3px solid #c47f00}
 
   @media (max-width:900px){
     main{grid-template-rows:auto auto}
@@ -150,6 +157,12 @@
     <div class="card">
       <h2>Requests</h2>
       <div class="body req">
+        <details id="briefBox">
+          <summary>Standing brief — what the agent is, always in effect</summary>
+          <textarea id="brief" placeholder="Loading…"></textarea>
+          <div class="row"><button class="ghost" id="saveBrief">Save brief</button>
+            <span class="hint" id="briefSaved"></span></div>
+        </details>
         <textarea id="goal" placeholder="Tell the agent what to do in the browser…"></textarea>
         <div class="examples">
           <button data-ex="Go to my Shopify admin and tell me how many orders are awaiting fulfilment.">orders awaiting fulfilment</button>
@@ -163,7 +176,8 @@
             style="width:50px;padding:4px;border:1px solid var(--line)"> steps</span>
         </div>
         <p class="hint"><b>Log in first:</b> click and type straight onto the browser above —
-        it's real. The agent won't enter credentials for you.</p>
+        it's real. The agent won't enter credentials or solve a CAPTCHA; it stops
+        and asks you. Runs continue even if you close this tab.</p>
       </div>
     </div>
 
@@ -283,130 +297,96 @@ $('stopBrowser').onclick = async () => {
   log('<span class="a">browser</span>stopped');
 };
 
-/* ------------------------------------------------------------ the loop */
+/* ----------------------------------------------- the agent (server-side) */
 
-// DeepSeek is text-only, so the agent reads the page's interactive elements
-// and visible text instead of a screenshot. It picks a control by index.
-const SYSTEM = `You operate a web browser to accomplish a goal.
+// The loop runs on the server, so closing this tab does not stop a run.
+// This page only starts/stops it and renders the status it polls.
 
-Each turn you receive the page URL, its visible text, and a numbered list of the
-interactive controls currently on screen.
-
-Reply with ONE action as strict JSON and nothing else:
-  {"action":"click","index":<n>,"why":"..."}
-  {"action":"type","index":<n>,"text":"...","why":"..."}   // clicks the field first
-  {"action":"key","key":"Enter","why":"..."}
-  {"action":"scroll","dy":600,"why":"..."}
-  {"action":"goto","url":"https://...","why":"..."}
-  {"action":"done","answer":"what you found or did","why":"..."}
-
-Rules:
-- "index" must be a number from the control list. Never invent one.
-- If what you need is not listed, scroll to reveal more before giving up.
-- The answer is often already in the page text — if so, reply done immediately.
-- If a sign-in or password screen is shown, do NOT attempt to log in. Reply done
-  and state that a human must sign in first.
-- When the goal is met, reply done with the answer.`;
-
-async function readPage() {
-  const r = await fetch('/api/browser/elements');
-  if (!r.ok) throw new Error('could not read the page (' + r.status + ')');
-  return await r.json();
-}
-
-function describe(p) {
-  const list = (p.elements || [])
-    .map(e => `[${e.i}] ${e.kind}${e.editable ? ' (editable)' : ''} "${e.label}"`)
-    .join('\n') || '(no interactive controls found)';
-  const scrolled = p.scrollHeight > p.viewport.h
-    ? `\nScroll: ${p.scrollY} of ${p.scrollHeight - p.viewport.h} (more below)` : '';
-  return `URL: ${p.url}\nTitle: ${p.title}${scrolled}\n\nControls:\n${list}\n\nPage text:\n${(p.text || '').slice(0, 3500)}`;
-}
+let lastRunId = null, lastLogLen = 0;
 
 document.querySelectorAll('.examples button').forEach(b => {
   b.onclick = () => { $('goal').value = b.dataset.ex; $('goal').focus(); };
 });
-$('halt').onclick = () => { halted = true; doing('Stopping…', 'finishing the current step', true); };
+
+$('halt').onclick = async () => {
+  await fetch('/api/agent/stop', {method:'POST'});
+  doing('Stopping…', 'finishing the current step', true);
+};
 
 $('run').onclick = async () => {
   const goal = $('goal').value.trim();
-  if (!goal || running) return;
-  running = true; halted = false;
-  $('run').disabled = true; $('halt').disabled = false;
-  const max = Math.max(1, Math.min(40, Number($('steps').value) || 12));
-  log('<b>Goal</b><br>' + esc(goal), 'e goal');
-
-  const history = [];
+  if (!goal) return;
+  $('run').disabled = true;
   try {
-    for (let i = 1; i <= max && !halted; i++) {
-      $('kStep').textContent = i + ' / ' + max;
-      doing('Reading the page…', 'step ' + i, true);
-      const pageInfo = await readPage();
-
-      doing('Thinking…', 'step ' + i + ' · ' + (model || 'model'), true);
-      const r = await fetch('/api/llm', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({
-          system: SYSTEM,
-          prompt: 'Goal: ' + goal + '\n\n' + describe(pageInfo) +
-                  (history.length ? '\n\nActions so far:\n' + history.join('\n') : '') +
-                  '\n\nWhat is your next single action? JSON only.',
-          model: model || undefined, max_tokens: 900, temperature: 0.2,
-        }),
-      });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
-
-      let step;
-      const m = String(data.text).match(/\{[\s\S]*\}/);
-      try { step = JSON.parse(m ? m[0] : data.text); }
-      catch (e) { log('<span class="a">unreadable</span>' + esc(String(data.text).slice(0,180)), 'e err'); break; }
-
-      log('<span class="n">' + i + '</span><span class="a">' + esc(step.action) + '</span>' +
-          esc((step.why || '').slice(0, 150)));
-      history.push(i + '. ' + JSON.stringify(step));
-
-      if (step.action === 'done') {
-        log('<b>Done</b><br>' + esc(step.answer || ''), 'e done');
-        doing('Done', (step.answer || '').slice(0, 90), false);
-        break;
-      }
-      doing('Acting: ' + step.action, (step.why || '').slice(0, 80), true);
-
-      // Resolve an element index back to real coordinates.
-      const byIndex = n => (pageInfo.elements || []).find(e => e.i === Number(n));
-
-      if (step.action === 'click' || step.action === 'type') {
-        const el = byIndex(step.index);
-        if (!el && step.index !== undefined) {
-          log('<span class="a">bad index</span>no control numbered ' + esc(step.index), 'e err');
-          history.push(i + '. ERROR: index ' + step.index + ' does not exist');
-          continue;
-        }
-        if (el) await act('click', {x: el.x, y: el.y});
-        else if (step.x !== undefined) await act('click', {x: step.x, y: step.y});
-        if (step.action === 'type') await act('type', {text: step.text || ''});
-      }
-      else if (step.action === 'key')    await act('key',    {key: step.key || 'Enter'});
-      else if (step.action === 'scroll') await act('scroll', {dy: step.dy || 600});
-      else if (step.action === 'goto')   await act('goto',   {url: step.url || ''});
-      else { log('<span class="a">unknown</span>' + esc(step.action), 'e err'); break; }
-
-      if (i === max) doing('Step limit reached', 'raise the limit and run again', false);
-    }
+    const r = await fetch('/api/agent/start', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({goal, maxSteps: Number($('steps').value) || 12}),
+    });
+    const d = await r.json();
+    if (!r.ok) { log('<b>Could not start</b><br>' + esc(d.error || r.status), 'e err'); $('run').disabled = false; }
   } catch (e) {
-    log('<b>Failed</b><br>' + esc(e.message), 'e err');
-    doing('Failed', String(e.message).slice(0, 90), false);
-  } finally {
-    running = false; halted = false;
-    $('run').disabled = false; $('halt').disabled = true;
-    $('kStep').textContent = '—';
-    if ($('nowDoing').textContent.startsWith('Acting') ||
-        $('nowDoing').textContent.startsWith('Thinking') ||
-        $('nowDoing').textContent.startsWith('Looking') ||
-        $('nowDoing').textContent === 'Stopping…') doing('Idle', 'Give it something to do below.', false);
+    log('<b>Could not start</b><br>' + esc(e.message), 'e err');
+    $('run').disabled = false;
   }
 };
+
+$('saveBrief').onclick = async () => {
+  const r = await fetch('/api/agent/brief', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({brief: $('brief').value}),
+  });
+  $('briefSaved').textContent = r.ok ? 'Saved — applies to the next run.' : 'Could not save.';
+  setTimeout(() => { $('briefSaved').textContent = ''; }, 4000);
+};
+
+const ICON = {goal:'goal', done:'done', error:'error', needs_human:'needs you',
+              stopped:'stopped', brief:'brief'};
+
+function renderRun(run) {
+  // A new run resets the log view.
+  if (run.id !== lastRunId) { $('log').innerHTML = ''; lastRunId = run.id; lastLogLen = 0; }
+
+  if (run.log.length !== lastLogLen) {
+    $('log').innerHTML = '';
+    for (const e of [...run.log].reverse()) {
+      const kind = e.kind;
+      if (kind === 'goal')        log('<b>Goal</b><br>' + esc(e.text), 'e goal');
+      else if (kind === 'done')   log('<b>Done</b><br>' + esc(e.text), 'e done');
+      else if (kind === 'error')  log('<b>Problem</b><br>' + esc(e.text), 'e err');
+      else if (kind === 'needs_human')
+        log('<b>Needs you</b><br>' + esc(e.text), 'e human');
+      else if (kind === 'brief')  log('<span class="a">brief</span>' + esc(e.text));
+      else log('<span class="n">' + (e.step || '') + '</span><span class="a">' +
+               esc(kind) + '</span>' + esc(e.text || ''));
+    }
+    lastLogLen = run.log.length;
+  }
+
+  const busy = run.status === 'running';
+  $('run').disabled = busy;
+  $('halt').disabled = !busy;
+  $('kStep').textContent = busy || run.step ? (run.step + ' / ' + run.maxSteps) : '—';
+
+  if (busy)                          doing('Working…', 'step ' + run.step + ' · ' + (model || ''), true);
+  else if (run.status === 'done')    doing('Done', (run.answer || '').slice(0, 90), false);
+  else if (run.status === 'needs_human') doing('Needs you', 'solve the check in the browser above', false);
+  else if (run.status === 'failed')  doing('Failed', (run.error || '').slice(0, 90), false);
+  else if (run.status === 'stopped') doing('Stopped', 'run cancelled', false);
+  else                               doing('Idle', 'Give it something to do below.', false);
+}
+
+let briefLoaded = false;
+async function pollAgent() {
+  try {
+    const s = await (await fetch('/api/agent/status')).json();
+    if (!briefLoaded && s.brief !== undefined) {
+      $('brief').value = s.brief; briefLoaded = true;
+    }
+    renderRun(s.run);
+  } catch (e) { /* server restarting */ }
+}
+setInterval(pollAgent, 1500);
+pollAgent();
 </script>
 </body>
 </html>
