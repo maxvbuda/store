@@ -3,14 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { LayoutDashboard, Store, Package, ClipboardList, CreditCard } from "lucide-react";
+import { LayoutDashboard, Store, Package, ClipboardList } from "lucide-react";
 
 const links = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard, exact: true },
   { href: "/dashboard/stores", label: "Stores", icon: Store },
   { href: "/dashboard/products", label: "Products", icon: Package },
   { href: "/dashboard/orders", label: "Orders", icon: ClipboardList },
-  { href: "/dashboard/billing", label: "Billing", icon: CreditCard },
 ];
 
 export function DashboardNav() {

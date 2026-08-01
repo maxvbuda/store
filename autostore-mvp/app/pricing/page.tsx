@@ -1,11 +1,8 @@
 import { Check } from "lucide-react";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { CheckoutButton } from "@/components/billing/checkout-button";
+import { Button } from "@/components/ui/button";
 import { MarketingNav } from "@/components/marketing/nav";
 import { MarketingFooter } from "@/components/marketing/footer";
-import { SUBSCRIPTION_PLANS, type PlanId } from "@/lib/stripe";
-
-const planOrder: PlanId[] = ["starter", "growth", "scale"];
 
 export default function PricingPage() {
   return (
@@ -17,39 +14,59 @@ export default function PricingPage() {
           Simple, transparent pricing
         </h1>
         <p className="mt-3 text-muted-foreground">
-          Pick a plan and let AI handle the busywork of running your store.
+          One simple plan to let AI handle the busywork of running your store.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
-        {planOrder.map((id) => {
-          const plan = SUBSCRIPTION_PLANS[id];
-          return (
-            <Card key={id} className={id === "growth" ? "border-primary shadow-md" : undefined}>
-              <CardHeader>
-                <CardTitle className="flex items-baseline justify-between">
-                  <span>{plan.name}</span>
-                  <span className="text-2xl font-bold">
-                    ${plan.price}
-                    <span className="text-sm font-normal text-muted-foreground">/mo</span>
-                  </span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ul className="flex flex-col gap-2 text-sm">
-                  {plan.features.map((f) => (
-                    <li key={f} className="flex items-center gap-2">
-                      <Check className="size-4 text-primary" /> {f}
-                    </li>
-                  ))}
-                </ul>
-              </CardContent>
-              <CardFooter>
-                <CheckoutButton plan={id} variant={id === "growth" ? "default" : "outline"} />
-              </CardFooter>
-            </Card>
-          );
-        })}
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-1 max-w-2xl mx-auto">
+        <Card className="border-primary shadow-md">
+          <CardHeader>
+            <CardTitle className="flex items-baseline justify-between">
+              <span>AutoStore AI</span>
+              <span className="text-2xl font-bold">
+                $28
+                <span className="text-sm font-normal text-muted-foreground">/mo</span>
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ul className="flex flex-col gap-2 text-sm">
+              <li className="flex items-center gap-2">
+                <Check className="size-4 text-primary" /> AI content generation
+              </li>
+              <li className="flex items-center gap-2">
+                <Check className="size-4 text-primary" /> Store management
+              </li>
+              <li className="flex items-center gap-2">
+                <Check className="size-4 text-primary" /> Order & deadline tracking
+              </li>
+              <li className="flex items-center gap-2">
+                <Check className="size-4 text-primary" /> Revenue insights
+              </li>
+              <li className="flex items-center gap-2">
+                <Check className="size-4 text-primary" /> Unlimited agent actions
+              </li>
+              <li className="flex items-center gap-2">
+                <Check className="size-4 text-primary" /> Support inbox automation
+              </li>
+            </ul>
+          </CardContent>
+          <CardFooter>
+            <Button 
+              variant="default" 
+              className="w-full"
+              asChild
+            >
+              <a 
+                href="https://www.foundersweekends.com/api/pay?venture=5fafe8d0-8f98-4405-9ed7-752846dbccfa&amount=2800&name=Venture+1"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Subscribe monthly — $28
+              </a>
+            </Button>
+          </CardFooter>
+        </Card>
       </div>
       </main>
       <MarketingFooter />
