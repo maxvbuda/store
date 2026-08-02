@@ -504,11 +504,7 @@ a{color:var(--color-accent)}a:hover{color:var(--color-accent-600)}
       <sc-if value="{{ onbCanBack }}" hint-placeholder-val="{{ false }}"><button class="btn btn-secondary" sc-camel-on-click="{{ onbBack }}">Back</button></sc-if>
       <sc-if value="{{ onbNotLast }}" hint-placeholder-val="{{ true }}"><button class="btn btn-primary" sc-camel-on-click="{{ onbNext }}" disabled="{{ onbNextDisabled }}">Continue<svg width="15" height="15" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg></button></sc-if>
       <sc-if value="{{ onb4 }}" hint-placeholder-val="{{ false }}"><button class="btn btn-primary" sc-camel-on-click="{{ launchAgent }}">Launch agent<svg width="15" height="15" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg></button></sc-if>
-<<<<<<< HEAD
       <a style="cursor:pointer;margin-left:auto;font-size:13px;align-self:center" sc-camel-on-click="{{ skipSetup }}">{{ skipLabel }}</a>
-=======
-      <a style="cursor:pointer;margin-left:auto;font-size:13px;align-self:center" sc-camel-on-click="{{ launchAgent }}">{{ skipLabel }}</a>
->>>>>>> ae3cfb10c49a13a2b0bf81a7b96cc616ee719fdc
     </div>
   </div>
 </div>
@@ -1483,11 +1479,9 @@ class Component extends DCLogic {
       brandLine: storeName + (st.onbConnected && st.onbUrl ? ' · ' + st.onbUrl : ''),
       skipLabel: 'Skip for now',
       // The markup had this wired to signIn, which became a real login attempt
-      // once accounts existed — so it failed on empty fields. It just skips.
-      skipSetup: () => {
-        this.setState({ screen: 'dashboard' });
-        this.toast('Setup skipped', 'You can finish it any time from Onboarding.');
-      },
+      // once accounts existed — so it failed on empty fields. Saves whatever
+      // was typed (same as finishing setup) rather than discarding it.
+      skipSetup: () => this.launchAgent(),
       connectedLine: st.onbUrl ? 'Connected to ' + st.onbUrl : 'Not connected yet',
       resolvedRatio: st.tickets.length
         ? st.tickets.filter(t => t.st === 'resolved' || t.st === 'sent').length + ' of ' + st.tickets.length
