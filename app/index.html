@@ -2,6 +2,7 @@
 <html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shop Agent</title>
 <script>window.__resources = {
   "https://unpkg.com/react@18.3.1/umd/react.production.min.js": "vendor/react.production.min.js",
   "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js": "vendor/react-dom.production.min.js",
@@ -380,7 +381,7 @@ a{color:var(--color-accent)}a:hover{color:var(--color-accent-600)}
 <sc-if value="{{ isLogin }}" hint-placeholder-val="{{ true }}">
 <div data-screen-label="Login" style="display:grid;grid-template-columns:1fr 1fr;min-height:100vh;background:var(--color-bg)">
   <div style="display:flex;flex-direction:column;padding:40px 64px">
-    <div style="font-family:var(--font-heading);font-weight:800;font-size:18px;letter-spacing:.02em">AUTOSTORE<span style="color:var(--color-accent)"> AI</span></div>
+    <div style="font-family:var(--font-heading);font-weight:800;font-size:18px;letter-spacing:.02em">SHOP<span style="color:var(--color-accent)"> AGENT</span></div>
     <div style="flex:1;display:flex;flex-direction:column;justify-content:center;max-width:400px">
       <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-accent);margin-bottom:12px">Agentic commerce · Shopify</div>
       <h1 style="font-size:44px;margin:0 0 16px">The store runs itself. You take the credit.</h1>
@@ -406,7 +407,7 @@ a{color:var(--color-accent)}a:hover{color:var(--color-accent-600)}
 
 <sc-if value="{{ isOnboarding }}" hint-placeholder-val="{{ false }}">
 <div data-screen-label="Onboarding" style="min-height:100vh;background:var(--color-bg);display:flex;flex-direction:column">
-  <div class="nav"><span class="nav-brand">AUTOSTORE<span style="color:var(--color-accent)"> AI</span></span><span style="font-size:11px;letter-spacing:.1em;font-variant-numeric:tabular-nums">STEP 0{{ onbStep }} / 04</span></div>
+  <div class="nav"><span class="nav-brand">SHOP<span style="color:var(--color-accent)"> AGENT</span></span><span style="font-size:11px;letter-spacing:.1em;font-variant-numeric:tabular-nums">STEP 0{{ onbStep }} / 04</span></div>
   <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:0 24px;margin-top:12px">
     <sc-for list="{{ onbCells }}" as="c" hint-placeholder-count="4"><div style="height:4px;background:{{ c.bg }}"></div></sc-for>
   </div>
@@ -512,7 +513,7 @@ a{color:var(--color-accent)}a:hover{color:var(--color-accent-600)}
 <sc-if value="{{ isApp }}" hint-placeholder-val="{{ false }}">
 <div style="height:100vh;display:flex;flex-direction:column;background:var(--color-bg);overflow:hidden">
   <div class="nav" style="padding:10px 20px;flex:none">
-    <span class="nav-brand" style="font-size:16px">AUTOSTORE<span style="color:var(--color-accent)"> AI</span></span>
+    <span class="nav-brand" style="font-size:16px">SHOP<span style="color:var(--color-accent)"> AGENT</span></span>
     <span class="tag tag-neutral" style="font-variant-numeric:tabular-nums">{{ storeName }} · Shopify</span>
     <span style="flex:1"></span>
     <a style="cursor:pointer;display:inline-flex;align-items:center;gap:7px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:800;font-family:var(--font-heading);text-decoration:none" sc-camel-on-click="{{ togglePanel }}"><span style="width:8px;height:8px;background:var(--color-accent);animation:pulse 1.6s infinite"></span>{{ agentChip }}</a>
@@ -784,7 +785,7 @@ class Component extends DCLogic {
     super(props);
     const h = 3600000, m = 60000;
     this.TASKS = ['Watching your store', 'Monitoring the support inbox', 'Reviewing catalog copy'];
-    this.STORAGE_KEY = 'autostore.state.v1';
+    this.STORAGE_KEY = 'shopagent.state.v1';
 
     const base = {
       screen: null, onbStep: 1, panelOpen: true, feedPaused: false,

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * AutoStore AI — local dev server.
+ * Shop Agent — local dev server.
  *
  *   node server.js            # http://localhost:8787
  *
@@ -9,7 +9,10 @@
  * from .env next to this file; edits to .env are picked up on the next request,
  * so you can paste your key and just reload the page.
  *
- * No dependencies — Node 18+ (uses the built-in fetch).
+ * Accounts + sessions live in MongoDB — set MONGODB_URI in .env, or a local
+ * MongoDB at mongodb://127.0.0.1:27017 is used by default.
+ *
+ * Node 18+ (uses the built-in fetch). One dependency: mongodb.
  */
 'use strict';
 
@@ -202,7 +205,7 @@ async function handleLLM(req, res) {
       Authorization: 'Bearer ' + key,
       'Content-Type': 'application/json',
       'HTTP-Referer': 'http://localhost:' + PORT,
-      'X-Title': 'AutoStore AI (local)',
+      'X-Title': 'Shop Agent (local)',
     },
     body: JSON.stringify(p),
     signal: AbortSignal.timeout(180000),
@@ -293,7 +296,7 @@ async function shopifyMcpRequest(path, payload, domain, password) {
 
 /** Loops the MCP request across /api/mcp and /api/ucp/mcp for the caller's own connected store. */
 async function handleShopifyMcp(req, res) {
-  const user = auth.currentUser(req);
+  const user = await auth.currentUser(req);
   if (!user) return send(res, 401, { error: 'Sign in first.' });
 
   let body;
@@ -338,7 +341,7 @@ async function handleCheckStore(req, res) {
   try {
     const r = await fetch(url.origin, {
       redirect: 'follow',
-      headers: { 'User-Agent': 'AutoStore-AI-local/1.0' },
+      headers: { 'User-Agent': 'ShopAgent-local/1.0' },
       signal: AbortSignal.timeout(10000),
     });
     let title = '';
@@ -355,11 +358,12 @@ async function handleCheckStore(req, res) {
 
 // ---------------------------------------------------------------- serve
 
-// Accounts + the shared-password gate.
-const auth = require('./lib/auth').create(env, send, readBody);
+// Accounts + the shared-password gate. Assigned once MongoDB connects,
+// below — request handling never starts until that's done.
+let auth;
 
 const UNLOCK_PAGE = `<!doctype html><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>AutoStore AI</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Shop Agent</title>
 <style>
  *{box-sizing:border-box} body{margin:0;min-height:100vh;display:flex;align-items:center;
    justify-content:center;background:#f4f4f2;font:15px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;color:#111}
@@ -369,7 +373,7 @@ const UNLOCK_PAGE = `<!doctype html><meta charset="utf-8">
  button{width:100%;padding:12px;border:0;background:#ec3013;color:#fff;font-size:15px;font-weight:600;cursor:pointer}
  .err{color:#ec3013;font-size:13px;min-height:18px;margin-top:8px}
 </style>
-<form id="f"><h1>AutoStore AI</h1><p>This instance is password protected.</p>
+<form id="f"><h1>Shop Agent</h1><p>This instance is password protected.</p>
 <input id="p" type="password" placeholder="Password" autofocus autocomplete="current-password">
 <button>Unlock</button><div class="err" id="e"></div></form>
 <script>
@@ -416,17 +420,26 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, HOST, () => {
-  const key = apiKey();
-  console.log('AutoStore AI  →  http://localhost:' + PORT);
-  console.log('  app dir : ' + APP_DIR);
-  console.log('  env file: ' + ENV_FILE + (fs.existsSync(ENV_FILE) ? '' : '  (missing)'));
-  console.log('  API key : ' + (key ? 'set (' + key.length + ' chars)' : 'NOT SET — AI features are off'));
-  console.log('  accounts: ' + auth.store.count() + '  (' + auth.store.file + ')');
-  console.log('  gate    : ' + (auth.gatePassword() ? 'ON — password required' : 'OFF'));
-  if (!key) console.log('\n  Add this line to .env, then just reload the page:\n    OPENROUTER_API_KEY=sk-or-v1-...\n');
-  if (!auth.gatePassword()) {
-    console.log('\n  ⚠  APP_PASSWORD is not set — /api/llm is OPEN.');
-    console.log('     Fine on localhost; set it before exposing this publicly.\n');
-  }
+(async () => {
+  auth = await require('./lib/auth').create(env, send, readBody);
+
+  server.listen(PORT, HOST, async () => {
+    const key = apiKey();
+    console.log('Shop Agent  →  http://localhost:' + PORT);
+    console.log('  app dir : ' + APP_DIR);
+    console.log('  env file: ' + ENV_FILE + (fs.existsSync(ENV_FILE) ? '' : '  (missing)'));
+    console.log('  API key : ' + (key ? 'set (' + key.length + ' chars)' : 'NOT SET — AI features are off'));
+    console.log('  mongodb : ' + env('MONGODB_URI', 'mongodb://127.0.0.1:27017/shop-agent'));
+    console.log('  accounts: ' + await auth.store.count());
+    console.log('  gate    : ' + (auth.gatePassword() ? 'ON — password required' : 'OFF'));
+    if (!key) console.log('\n  Add this line to .env, then just reload the page:\n    OPENROUTER_API_KEY=sk-or-v1-...\n');
+    if (!auth.gatePassword()) {
+      console.log('\n  ⚠  APP_PASSWORD is not set — /api/llm is OPEN.');
+      console.log('     Fine on localhost; set it before exposing this publicly.\n');
+    }
+  });
+})().catch((e) => {
+  console.error('[startup] Could not connect to MongoDB: ' + e.message);
+  console.error('  Set MONGODB_URI in .env — defaults to mongodb://127.0.0.1:27017/shop-agent for local dev.');
+  process.exit(1);
 });

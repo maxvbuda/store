@@ -3,7 +3,7 @@ class Component extends DCLogic {
     super(props);
     const h = 3600000, m = 60000;
     this.TASKS = ['Watching your store', 'Monitoring the support inbox', 'Reviewing catalog copy'];
-    this.STORAGE_KEY = 'autostore.state.v1';
+    this.STORAGE_KEY = 'shopagent.state.v1';
 
     const base = {
       screen: null, onbStep: 1, panelOpen: true, feedPaused: false,

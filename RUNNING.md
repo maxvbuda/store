@@ -1,10 +1,12 @@
-# Running AutoStore AI locally
+# Running Shop Agent locally
 
 ```bash
+npm install
 node server.js          # http://localhost:8787
 ```
 
-Node 18+ only. No `npm install` — there are no dependencies.
+Node 18+. Needs a MongoDB running at `MONGODB_URI` (defaults to
+`mongodb://127.0.0.1:27017/shop-agent` for local dev).
 
 ## Giving it your OpenRouter key
 
@@ -44,7 +46,7 @@ the server adds the `Authorization` header when it forwards to OpenRouter.
 | Billing | plan switch | Saves locally. **Not** wired to Stripe — no Stripe account is connected. |
 
 Everything except billing survives a reload (`localStorage`). To reset:
-`localStorage.removeItem('autostore.state.v1')` in the browser console.
+`localStorage.removeItem('shopagent.state.v1')` in the browser console.
 
 ## Editing
 
