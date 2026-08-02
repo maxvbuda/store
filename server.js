@@ -432,9 +432,16 @@ server.on('error', (e) => {
     console.log('  env file: ' + ENV_FILE + (fs.existsSync(ENV_FILE) ? '' : '  (missing)'));
     console.log('  API key : ' + (key ? 'set (' + key.length + ' chars)' : 'NOT SET — AI features are off'));
     console.log('  auth    : ' + (auth.store.file ? 'file (' + auth.store.file + ')' : 'supabase'));
-    console.log('  accounts: ' + await auth.store.count());
-    console.log('  gate    : ' + (auth.gatePassword() ? 'ON — password required' : 'OFF'));
+    // Watchdog before the first await: this callback's promise is unobserved,
+    // so if the count below rejects (a Supabase hiccup at boot, say) anything
+    // after it would be skipped silently — and the watchdog must not be.
     watch.start();
+    try {
+      console.log('  accounts: ' + await auth.store.count());
+    } catch (e) {
+      console.log('  accounts: unavailable (' + ((e && e.message) || e) + ')');
+    }
+    console.log('  gate    : ' + (auth.gatePassword() ? 'ON — password required' : 'OFF'));
     if (!key) console.log('\n  Add this line to .env, then just reload the page:\n    OPENROUTER_API_KEY=sk-or-v1-...\n');
     if (!auth.gatePassword()) {
       console.log('\n  ⚠  APP_PASSWORD is not set — /api/llm is OPEN.');

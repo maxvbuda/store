@@ -32,9 +32,12 @@ and runs Chromium headless on its own.
 
 ## What still resets on deploy
 
-The agent's browser profile (`.data/browser-profile`) lives on the ephemeral
-disk, so **sites you logged the agent into log out on every deploy**. To keep
-those sessions, add a Render Disk mounted at `/data` and set `DATA_DIR=/data`.
+Everything under `.data/` lives on the ephemeral disk — the agent's browser
+profile most painfully, so **sites you logged the agent into log out on every
+deploy**. To keep those sessions, add a Render Disk mounted at `/data` and set
+`DATA_DIR=/data`: that one variable relocates the accounts file, the error
+log, the agent brief, *and* the browser profile. `BROWSER_PROFILE` remains
+available as an override if the profile alone needs a different path.
 Accounts don't need the disk once Supabase is configured.
 
 ## If Chromium still fails to launch

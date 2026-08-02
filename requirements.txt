@@ -3,9 +3,10 @@
 #   python3 -m pip install -r requirements.txt
 #   python3 -m playwright install chromium      # <- REQUIRED, see below
 #
-# The Node server itself has no dependencies. These are only needed for the
+# The Node server needs `npm install` as well — it pulls @supabase/supabase-js,
+# which is only loaded when Supabase is configured. This file covers just the
 # computer-use browser at /  — everything else (accounts, the store app, the
-# OpenRouter proxy) runs without them.
+# OpenRouter proxy) runs without it.
 
 # Browser automation. The sidecar drives Chromium through this.
 playwright==1.61.0
