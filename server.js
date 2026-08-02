@@ -360,6 +360,13 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/unlock') {
       if (await auth.handle(req, res, url)) return;
     }
+    // The agent's OWN browser boots to this page and never has a gate cookie,
+    // so the gate would trap it on the unlock screen — which is exactly the
+    // "the agent just sits on the password page" bug. It is a static
+    // instruction page with no secrets and no API access, so let it through.
+    if (url.pathname === '/agent-start.html') {
+      return serveStatic(req, res, '/agent-start.html');
+    }
     if (!auth.isUnlocked(req)) {
       if (url.pathname.startsWith('/api/')) {
         return send(res, 401, { error: 'locked — unlock this instance first' });
