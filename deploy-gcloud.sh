@@ -89,7 +89,7 @@ if gcloud compute instances describe "$VM" --zone "$ZONE" >/dev/null 2>&1; then
   echo "== VM exists — re-running the startup script (pulls latest main) =="
   gcloud compute instances add-metadata "$VM" --zone "$ZONE" \
     --metadata-from-file startup-script="$STARTUP"
-  gcloud compute ssh "$VM" --zone "$ZONE" --command \
+  gcloud compute ssh "$VM" --zone "$ZONE" --tunnel-through-iap --command \
     'sudo google_metadata_script_runner startup'
 else
   gcloud compute instances create "$VM" \
@@ -101,11 +101,13 @@ else
 fi
 rm -f "$STARTUP"
 
-echo "== waiting for SSH =="
+echo "== waiting for SSH (via IAP tunnel — works even where outbound port 22 is blocked) =="
+ok=""
 for i in $(seq 1 30); do
-  gcloud compute ssh "$VM" --zone "$ZONE" --command 'true' >/dev/null 2>&1 && break
+  if gcloud compute ssh "$VM" --zone "$ZONE" --tunnel-through-iap --command 'true' >/dev/null 2>&1; then ok=1; break; fi
   sleep 10
 done
+[ -n "$ok" ] || { echo "could not reach the VM over SSH (IAP) after 5 min"; exit 1; }
 
 # ---- environment ----------------------------------------------------------
 # Built from the local .env. The VM is on a public IP, so an APP_PASSWORD is
@@ -116,8 +118,8 @@ grep -v '^APP_PASSWORD=' .env > "$VMENV"
 PASS=${APP_PASSWORD:-$(openssl rand -hex 8)}
 echo "APP_PASSWORD=$PASS" >> "$VMENV"
 
-gcloud compute scp "$VMENV" "$VM":/tmp/store.env --zone "$ZONE"
-gcloud compute ssh "$VM" --zone "$ZONE" --command \
+gcloud compute scp --tunnel-through-iap "$VMENV" "$VM":/tmp/store.env --zone "$ZONE"
+gcloud compute ssh "$VM" --zone "$ZONE" --tunnel-through-iap --command \
   'sudo mv /tmp/store.env /opt/store/store/.env && sudo chown store:store /opt/store/store/.env && sudo chmod 600 /opt/store/store/.env'
 rm -f "$VMENV"
 
