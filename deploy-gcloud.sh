@@ -44,7 +44,11 @@ cat > "$STARTUP" <<'EOS'
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y nodejs npm python3 python3-pip git curl
+# xvfb + xauth give Chromium a real (virtual) display so it runs HEADED on a
+# server with no monitor. Headless Chromium is what trips Cloudflare and the
+# other bot walls; headed-under-Xvfb passes them. xauth is separate — xvfb-run
+# aborts without it.
+apt-get install -y nodejs npm python3 python3-pip git curl xvfb xauth
 
 id -u store >/dev/null 2>&1 || useradd -m -d /opt/store -s /bin/bash store
 mkdir -p /opt/store && chown store:store /opt/store
@@ -73,7 +77,9 @@ Wants=network-online.target
 [Service]
 User=store
 WorkingDirectory=/opt/store/store
-ExecStart=/usr/bin/node server.js
+# Wrapped in xvfb-run so Chromium launches headed against a virtual display —
+# the sidecar must NOT add --headless, which is why BROWSER_HEADLESS is unset.
+ExecStart=/usr/bin/xvfb-run -a --server-args=-screen 0 1280x800x24 /usr/bin/node server.js
 Restart=always
 RestartSec=5
 Environment=PORT=8787
