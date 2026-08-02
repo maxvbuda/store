@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "autostore-mvp"],
       "port": 3000
+    },
+    {
+      "name": "autostore-root",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server.js"],
+      "port": 8787
     }
   ]
 }

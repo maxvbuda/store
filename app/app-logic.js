@@ -2,8 +2,6 @@ class Component extends DCLogic {
   constructor(props) {
     super(props);
     const h = 3600000, m = 60000;
-    // Fallback feed used only when the LLM is unavailable (no API key / offline).
-    this.FEED_SCRIPT = [];
     this.TASKS = ['Watching your store', 'Monitoring the support inbox', 'Reviewing catalog copy'];
     this.STORAGE_KEY = 'autostore.state.v1';
 
@@ -39,17 +37,6 @@ class Component extends DCLogic {
       this.setState(s);
     }, 1000);
 
-    this.ticker = setInterval(() => {
-      const live = this.props.agentFeedLive ?? true;
-      if (!live || this.state.feedPaused || this.curScreen() === 'login' || this.curScreen() === 'onboarding') return;
-      const script = this.aiFeed && this.aiFeed.length ? this.aiFeed : this.FEED_SCRIPT;
-      if (!script.length) return;   // nothing to replay until the agent feed loads
-      const e = script[this.state.feedIdx % script.length];
-      this.pushFeed(e.kind, e.text);
-      this.setState(s => ({ feedIdx: s.feedIdx + 1, taskIdx: s.taskIdx + 1, bellCount: s.bellCount + 1, actionCount: s.actionCount + 1 }));
-      if (e.toast) this.toast(e.toast.title, e.toast.body);
-    }, 9000);
-
     this.checkAI();
     this.checkAuth();
   }
@@ -62,7 +49,8 @@ class Component extends DCLogic {
       const r = await this.api('/api/account/me');
       if (r.signedIn) {
         this.setState({ user: r.user });
-        if (this.curScreen() === 'login') {
+        const appScreens = ['dashboard', 'products', 'orders', 'marketing', 'support', 'requests', 'billing'];
+        if (!appScreens.includes(this.curScreen())) {
           this.setState({ screen: r.user.setup ? 'dashboard' : 'onboarding' });
         }
       }
@@ -109,7 +97,7 @@ class Component extends DCLogic {
     this.toast('Signed out', 'See you next time.');
   }
 
-  componentWillUnmount() { clearInterval(this.clock); clearInterval(this.ticker); }
+  componentWillUnmount() { clearInterval(this.clock); }
 
   componentDidUpdate() { this.save(); }
 
@@ -164,8 +152,7 @@ class Component extends DCLogic {
     try {
       const s = await this.api('/api/status');
       this.setState({ ai: { ready: !!s.hasKey, hasKey: !!s.hasKey, model: s.model || '', error: '' } });
-      if (s.hasKey) this.loadAgentFeed();
-      else this.toast('No OpenRouter key yet', 'Paste your key into .env, then reload this page — AI features are off until then.');
+      if (!s.hasKey) this.toast('No OpenRouter key yet', 'Paste your key into .env, then reload this page — AI features are off until then.');
     } catch (e) {
       this.setState({ ai: { ready: false, hasKey: false, model: '', error: String(e.message || e) } });
     }
@@ -201,33 +188,6 @@ class Component extends DCLogic {
     const msg = String((err && err.message) || err);
     this.toast(what + ' failed', msg.slice(0, 140));
     this.pushFeed('agent', what + ' failed — ' + msg.slice(0, 90));
-  }
-
-  /** One cheap call at startup produces this session's live agent activity. */
-  async loadAgentFeed() {
-    try {
-      const raw = await this.llm(
-        this.brandBrief() +
-        '\n\nWrite 8 log lines describing autonomous work an e-commerce agent did for this store in the last hour. ' +
-        'Cover a mix of: seo, support, marketing, pricing, inventory, orders. Be specific — real SKUs, real dollar amounts, real timings. ' +
-        'Return one line per row in the exact format: kind|text\n' +
-        'kind must be one of: seo, support, marketing, pricing, inventory, orders.',
-        { system: 'You output plain lines only, no numbering, no markdown.', maxTokens: 500, temperature: 0.9 }
-      );
-      const kinds = ['seo', 'support', 'marketing', 'pricing', 'inventory', 'orders'];
-      const parsed = raw.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
-        const i = l.indexOf('|');
-        if (i < 0) return null;
-        const kind = l.slice(0, i).trim().toLowerCase().replace(/[^a-z]/g, '');
-        const text = l.slice(i + 1).trim();
-        if (!text) return null;
-        return { kind: kinds.includes(kind) ? kind : 'agent', text, toast: null };
-      }).filter(Boolean);
-      if (parsed.length >= 3) {
-        parsed[Math.min(2, parsed.length - 1)].toast = { title: 'Agent needs your attention', body: parsed[Math.min(2, parsed.length - 1)].text.slice(0, 80) };
-        this.aiFeed = parsed;
-      }
-    } catch (e) { /* keep the scripted fallback */ }
   }
 
   // -------------------------------------------------------------- helpers
