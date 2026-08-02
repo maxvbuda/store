@@ -9,10 +9,10 @@
  * from .env next to this file; edits to .env are picked up on the next request,
  * so you can paste your key and just reload the page.
  *
- * Accounts + sessions live in MongoDB — set MONGODB_URI in .env, or a local
- * MongoDB at mongodb://127.0.0.1:27017 is used by default.
+ * Accounts + sessions live in Supabase Postgres — set SUPABASE_URL and
+ * SUPABASE_SERVICE_ROLE_KEY in .env, and run supabase/schema.sql once.
  *
- * Node 18+ (uses the built-in fetch). One dependency: mongodb.
+ * Node 18+ (uses the built-in fetch). Dependencies: @supabase/supabase-js.
  */
 'use strict';
 
@@ -378,9 +378,9 @@ async function handleCheckStore(req, res) {
 
 // ---------------------------------------------------------------- serve
 
-<<<<<<< HEAD
-// Accounts + the shared-password gate.
-const auth = require('./lib/auth').create(env, send, readBody);
+// Accounts + the shared-password gate. Assigned once Supabase is reachable,
+// below — request handling never starts until that's done.
+let auth;
 // The agent's Chromium (Python sidecar, spawned on first use).
 const browser = require('./lib/browser').create(env, send, readBody);
 // The agent loop runs here, not in the page, so a closed tab doesn't kill it.
@@ -388,11 +388,6 @@ const agent = require('./lib/agent').create(env, send, readBody, browser, askMod
 process.on('exit', () => browser.stop());
 process.on('SIGINT', () => { browser.stop(); process.exit(0); });
 process.on('SIGTERM', () => { browser.stop(); process.exit(0); });
-=======
-// Accounts + the shared-password gate. Assigned once MongoDB connects,
-// below — request handling never starts until that's done.
-let auth;
->>>>>>> ae3cfb10c49a13a2b0bf81a7b96cc616ee719fdc
 
 const UNLOCK_PAGE = `<!doctype html><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Shop Agent</title>
@@ -466,7 +461,6 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-<<<<<<< HEAD
 // Two servers on one port is the fault behind most "503 / stuck starting"
 // reports: the second one keeps respawning a sidecar that can never bind.
 server.on('error', (e) => {
@@ -478,20 +472,6 @@ server.on('error', (e) => {
   throw e;
 });
 
-server.listen(PORT, HOST, () => {
-  const key = apiKey();
-  console.log('AutoStore AI  →  http://localhost:' + PORT);
-  console.log('  app dir : ' + APP_DIR);
-  console.log('  env file: ' + ENV_FILE + (fs.existsSync(ENV_FILE) ? '' : '  (missing)'));
-  console.log('  API key : ' + (key ? 'set (' + key.length + ' chars)' : 'NOT SET — AI features are off'));
-  console.log('  accounts: ' + auth.store.count() + '  (' + auth.store.file + ')');
-  console.log('  gate    : ' + (auth.gatePassword() ? 'ON — password required' : 'OFF'));
-  if (!key) console.log('\n  Add this line to .env, then just reload the page:\n    OPENROUTER_API_KEY=sk-or-v1-...\n');
-  if (!auth.gatePassword()) {
-    console.log('\n  ⚠  APP_PASSWORD is not set — /api/llm is OPEN.');
-    console.log('     Fine on localhost; set it before exposing this publicly.\n');
-  }
-=======
 (async () => {
   auth = await require('./lib/auth').create(env, send, readBody);
 
@@ -501,7 +481,7 @@ server.listen(PORT, HOST, () => {
     console.log('  app dir : ' + APP_DIR);
     console.log('  env file: ' + ENV_FILE + (fs.existsSync(ENV_FILE) ? '' : '  (missing)'));
     console.log('  API key : ' + (key ? 'set (' + key.length + ' chars)' : 'NOT SET — AI features are off'));
-    console.log('  mongodb : ' + env('MONGODB_URI', 'mongodb://127.0.0.1:27017/shop-agent'));
+    console.log('  supabase: ' + ((env('SUPABASE_URL', '') || env('NEXT_PUBLIC_SUPABASE_URL', '')) ? 'configured' : 'NOT SET'));
     console.log('  accounts: ' + await auth.store.count());
     console.log('  gate    : ' + (auth.gatePassword() ? 'ON — password required' : 'OFF'));
     if (!key) console.log('\n  Add this line to .env, then just reload the page:\n    OPENROUTER_API_KEY=sk-or-v1-...\n');
@@ -511,8 +491,7 @@ server.listen(PORT, HOST, () => {
     }
   });
 })().catch((e) => {
-  console.error('[startup] Could not connect to MongoDB: ' + e.message);
-  console.error('  Set MONGODB_URI in .env — defaults to mongodb://127.0.0.1:27017/shop-agent for local dev.');
+  console.error('[startup] Could not connect to Supabase: ' + e.message);
+  console.error('  Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.');
   process.exit(1);
->>>>>>> ae3cfb10c49a13a2b0bf81a7b96cc616ee719fdc
 });

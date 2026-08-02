@@ -631,11 +631,9 @@ class Component extends DCLogic {
       brandLine: storeName + (st.onbConnected && st.onbUrl ? ' · ' + st.onbUrl : ''),
       skipLabel: 'Skip for now',
       // The markup had this wired to signIn, which became a real login attempt
-      // once accounts existed — so it failed on empty fields. It just skips.
-      skipSetup: () => {
-        this.setState({ screen: 'dashboard' });
-        this.toast('Setup skipped', 'You can finish it any time from Onboarding.');
-      },
+      // once accounts existed — so it failed on empty fields. Saves whatever
+      // was typed (same as finishing setup) rather than discarding it.
+      skipSetup: () => this.launchAgent(),
       connectedLine: st.onbUrl ? 'Connected to ' + st.onbUrl : 'Not connected yet',
       resolvedRatio: st.tickets.length
         ? st.tickets.filter(t => t.st === 'resolved' || t.st === 'sent').length + ' of ' + st.tickets.length
