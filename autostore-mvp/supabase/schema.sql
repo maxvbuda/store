@@ -11,6 +11,7 @@ create table if not exists public.profiles (
   stripe_customer_id text,
   subscription_tier text default 'none', -- 'none' | 'starter' | 'growth' | 'scale'
   subscription_status text default 'inactive', -- 'inactive' | 'active' | 'past_due' | 'canceled'
+  free_trial_start_date timestamptz,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
@@ -75,7 +76,7 @@ create or replace function public.handle_new_user()
 returns trigger as $$
 begin
   insert into public.profiles (id, email, full_name)
-  values (new.id, new.email::text, new.raw_user_meta_data->>'full_name')
+  values (new.id, COALESCE(new.email::text, ''), COALESCE(new.raw_user_meta_data->>'full_name', ''))
   on conflict (id) do nothing;
   return new;
 end;
