@@ -196,7 +196,8 @@ def ensure(headless: bool):
         teardown()
         state["last_launch_error"] = msg[:200]
         raise
-<<<<<<< HEAD
+    # Launched cleanly — clear any stale error from a previous failed attempt.
+    state["last_launch_error"] = None
     # Close anything the profile restored, then work from one known tab.
     pages = list(state["ctx"].pages)
     state["page"] = pages[0] if pages else state["ctx"].new_page()
@@ -205,10 +206,6 @@ def ensure(headless: bool):
             extra.close()
         except Exception:
             pass
-=======
-    state["last_launch_error"] = None
-    state["page"] = state["ctx"].pages[0] if state["ctx"].pages else state["ctx"].new_page()
->>>>>>> 121e0b062f78eaf865421bf7fdf7d0b2f3dcf2c2
     if _stealth is not None:
         try:
             _stealth.apply_stealth_sync(state["page"])

@@ -420,34 +420,21 @@ server.on('error', (e) => {
   throw e;
 });
 
-<<<<<<< HEAD
-server.listen(PORT, HOST, () => {
-  const key = apiKey();
-  console.log('AutoStore AI  →  http://localhost:' + PORT);
-  console.log('  app dir : ' + APP_DIR);
-  console.log('  env file: ' + ENV_FILE + (fs.existsSync(ENV_FILE) ? '' : '  (missing)'));
-  console.log('  API key : ' + (key ? 'set (' + key.length + ' chars)' : 'NOT SET — AI features are off'));
-  console.log('  accounts: ' + auth.store.count() + '  (' + auth.store.file + ')');
-  console.log('  gate    : ' + (auth.gatePassword() ? 'ON — password required' : 'OFF'));
-  watch.start();
-  if (!key) console.log('\n  Add this line to .env, then just reload the page:\n    OPENROUTER_API_KEY=sk-or-v1-...\n');
-  if (!auth.gatePassword()) {
-    console.log('\n  ⚠  APP_PASSWORD is not set — /api/llm is OPEN.');
-    console.log('     Fine on localhost; set it before exposing this publicly.\n');
-  }
-=======
 (async () => {
+  // Supabase when configured (accounts survive redeploys), the flat-file
+  // store otherwise (zero-setup local dev). lib/auth.js picks.
   auth = await require('./lib/auth').create(env, send, readBody);
 
   server.listen(PORT, HOST, async () => {
     const key = apiKey();
-    console.log('Shop Agent  →  http://localhost:' + PORT);
+    console.log('AutoStore AI  →  http://localhost:' + PORT);
     console.log('  app dir : ' + APP_DIR);
     console.log('  env file: ' + ENV_FILE + (fs.existsSync(ENV_FILE) ? '' : '  (missing)'));
     console.log('  API key : ' + (key ? 'set (' + key.length + ' chars)' : 'NOT SET — AI features are off'));
-    console.log('  supabase: ' + ((env('SUPABASE_URL', '') || env('NEXT_PUBLIC_SUPABASE_URL', '')) ? 'configured' : 'NOT SET'));
+    console.log('  auth    : ' + (auth.store.file ? 'file (' + auth.store.file + ')' : 'supabase'));
     console.log('  accounts: ' + await auth.store.count());
     console.log('  gate    : ' + (auth.gatePassword() ? 'ON — password required' : 'OFF'));
+    watch.start();
     if (!key) console.log('\n  Add this line to .env, then just reload the page:\n    OPENROUTER_API_KEY=sk-or-v1-...\n');
     if (!auth.gatePassword()) {
       console.log('\n  ⚠  APP_PASSWORD is not set — /api/llm is OPEN.');
@@ -455,8 +442,8 @@ server.listen(PORT, HOST, () => {
     }
   });
 })().catch((e) => {
-  console.error('[startup] Could not connect to Supabase: ' + e.message);
-  console.error('  Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.');
+  console.error('[startup] ' + ((e && e.message) || e));
+  console.error('  If this mentions Supabase: fix SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY');
+  console.error('  in .env, or remove them to use the local file store instead.');
   process.exit(1);
->>>>>>> 121e0b062f78eaf865421bf7fdf7d0b2f3dcf2c2
 });
