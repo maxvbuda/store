@@ -242,6 +242,14 @@ async function syncState() {
     const st = s.state || {};
     $('kTitle').textContent = st.title || '—';
     $('kUrl').textContent = st.url ? st.url.replace(/^https?:\/\//, '').slice(0, 44) : '—';
+    // A blank page renders as an empty white box, which looks like a failure.
+    if (st.url === 'about:blank') {
+      $('veil').style.display = 'grid';
+      $('veil').innerHTML = 'Blank page.<br><small>Type a URL in the bar above, '
+        + 'or <a href="#" id="goStart">open the start page</a>.</small>';
+      const g = document.getElementById('goStart');
+      if (g) g.onclick = (ev) => { ev.preventDefault(); act('goto', {url: '/agent-start.html'}); };
+    }
   } catch (e) {}
 }
 setInterval(refresh, 1200);

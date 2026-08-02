@@ -49,9 +49,11 @@ if DRIVER != "patchright":
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROFILE = pathlib.Path(os.environ.get("BROWSER_PROFILE", ROOT / ".data" / "browser-profile"))
-# Blank by default: admin.shopify.com lands on a Cloudflare bot check, which
-# has no readable controls, so the agent would start out blind.
-START_URL = os.environ.get("BROWSER_START_URL", "about:blank")
+# Our own start page: renders instantly, has no bot check, and tells the user
+# what to do. about:blank was worse than the Cloudflare wall — a blank white
+# rectangle just reads as "the browser is broken".
+START_URL = os.environ.get("BROWSER_START_URL",
+                           "http://127.0.0.1:8787/agent-start.html")
 
 lock = threading.Lock()
 state = {"ctx": None, "page": None, "pw": None}
