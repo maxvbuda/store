@@ -266,6 +266,7 @@ async function askModel(body) {
     return { text, model: data.model || model, usage: data.usage || null };
   } catch (e) {
     console.error('[llm] failed:', e.message);
+    try { watch.record('llm', e.message, { model }); } catch (_) {}
     throw e;
   }
 }
@@ -306,7 +307,9 @@ const auth = require('./lib/auth').create(env, send, readBody);
 // The agent's Chromium (Python sidecar, spawned on first use).
 const browser = require('./lib/browser').create(env, send, readBody);
 // The agent loop runs here, not in the page, so a closed tab doesn't kill it.
-const agent = require('./lib/agent').create(env, send, readBody, browser, askModel);
+// Error recording + a watchdog that restarts a wedged browser on its own.
+const watch = require('./lib/watch').create(env, send, readBody, browser);
+const agent = require('./lib/agent').create(env, send, readBody, browser, askModel, watch.record);
 process.on('exit', () => browser.stop());
 process.on('SIGINT', () => { browser.stop(); process.exit(0); });
 process.on('SIGTERM', () => { browser.stop(); process.exit(0); });
@@ -357,6 +360,9 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/agent/')) {
       if (await agent.handle(req, res, url)) return;
     }
+    if (url.pathname === '/api/errors' || url.pathname === '/api/health') {
+      if (await watch.handle(req, res, url)) return;
+    }
     // The agent console is the start page now. The original store app — login,
     // products, marketing, support — still lives at /app.
     if (url.pathname === '/' || url.pathname === '/browser' || url.pathname === '/browser/') {
@@ -378,6 +384,7 @@ const server = http.createServer(async (req, res) => {
     serveStatic(req, res, url.pathname);
   } catch (e) {
     console.error(e);
+    try { watch.record('http', e.message, { path: url.pathname }); } catch (_) {}
     send(res, 500, { error: String(e.message || e) });
   }
 });
@@ -401,6 +408,7 @@ server.listen(PORT, HOST, () => {
   console.log('  API key : ' + (key ? 'set (' + key.length + ' chars)' : 'NOT SET — AI features are off'));
   console.log('  accounts: ' + auth.store.count() + '  (' + auth.store.file + ')');
   console.log('  gate    : ' + (auth.gatePassword() ? 'ON — password required' : 'OFF'));
+  watch.start();
   if (!key) console.log('\n  Add this line to .env, then just reload the page:\n    OPENROUTER_API_KEY=sk-or-v1-...\n');
   if (!auth.gatePassword()) {
     console.log('\n  ⚠  APP_PASSWORD is not set — /api/llm is OPEN.');
