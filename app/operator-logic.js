@@ -57,7 +57,8 @@ class Component extends DCLogic {
       backlog: false,
       seconds: 0,
       // live data, polled from the server
-      run: null, updates: [], browserOk: false, model: '', pageTitle: '', pageUrl: ''
+      run: null, updates: [], browserOk: false, model: '', pageTitle: '', pageUrl: '',
+      goalDraft: '', composerError: ''
     };
     this.tick = 0;
     this.bootedAt = Date.now();
@@ -98,6 +99,39 @@ class Component extends DCLogic {
       this.setState({ browserOk: !!bs.healthy, model: b.model || '',
                       pageTitle: bs.title || '', pageUrl: bs.url || '' });
     } catch (e) { this.setState({ browserOk: false }); }
+  }
+
+  /**
+   * Start a real server-side run from whatever is in the composer.
+   *
+   * The run outlives this tab — it lives on the server, so closing the page
+   * does not stop it. Errors land in the composer rather than a dialog,
+   * because the panel is already open and looking at you.
+   */
+  async submitGoal() {
+    const goal = (this.state.goalDraft || '').trim();
+    if (!goal) { this.setState({ composerError: 'Type what it should do first.' }); return; }
+    const r = this.state.run;
+    if (r && r.status === 'running') {
+      this.setState({ composerError: 'Already running — stop it first.' });
+      return;
+    }
+    try {
+      const res = await fetch('/api/agent/start', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ goal, maxSteps: 12 }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        this.setState({ composerError: data.error || ('Could not start (' + res.status + ')') });
+        return;
+      }
+      // Close the composer and show the screen — the point is watching it work.
+      this.setState({ backlog: false, goalDraft: '', composerError: '' });
+      this.poll();
+    } catch (e) {
+      this.setState({ composerError: 'Server unreachable: ' + (e.message || e) });
+    }
   }
 
   /** Map a click on the scaled frame back to real 1280x800 page coordinates. */
@@ -370,24 +404,59 @@ class Component extends DCLogic {
       takeoverHoverStyle: { background: 'var(--color-accent-600)' },
       playLabel: busy ? 'Working' : 'Run goal',
       manualLabel: st.manual ? 'Give back' : 'Take over',
-      // Ask for a goal and start a real server-side run. It keeps going even
-      // if this tab is closed.
+      // Open the composer. This used to be a window.prompt(), which browsers
+      // suppress after the first dialog and which no one could see coming.
       togglePlay: () => {
         if (busy) return;
-        const goal = window.prompt('What should the agent do in the browser?',
-                                   run.goal || 'Open example.com and tell me the main heading.');
-        if (!goal) return;
-        fetch('/api/agent/start', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ goal, maxSteps: 12 }),
-        }).then(() => this.poll()).catch(() => {});
+        this.setState({ backlog: true, composerError: '' });
       },
       stop: () => { fetch('/api/agent/stop', { method: 'POST' }).then(() => this.poll()).catch(() => {}); },
       toggleManual: () => this.setState(s => ({ manual: !s.manual })),
 
       backlogOpen: st.backlog,
       screenOpen: !st.backlog,
-      toggleBacklog: () => this.setState(s => ({ backlog: !s.backlog })),
+      toggleBacklog: () => this.setState(s => ({ backlog: !s.backlog, composerError: '' })),
+
+      // ---- goal composer -------------------------------------------------
+      goalDraft: st.goalDraft,
+      setGoalDraft: e => this.setState({ goalDraft: e.target.value, composerError: '' }),
+      // Enter runs it; Shift+Enter is a newline, so multi-line goals still work.
+      onGoalKey: e => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.submitGoal(); }
+        if (e.key === 'Escape') this.setState({ backlog: false });
+      },
+      submitGoal: () => this.submitGoal(),
+      submitLabel: busy ? 'Working…' : 'Run it',
+      composerState: busy ? ('Step ' + r.step + ' of ' + r.maxSteps) : 'Idle',
+      composerHint: st.composerError
+        || (st.goalDraft.trim() ? 'Enter to run · Shift+Enter for a new line'
+                                : 'Plain English. It reads the page and works out the clicks.'),
+      goalInputStyle: {
+        width: '100%', minHeight: '96px', resize: 'vertical', display: 'block',
+        boxSizing: 'border-box', padding: '15px 17px',
+        border: '1px solid ' + (st.composerError
+          ? 'var(--color-accent-600)'
+          : 'color-mix(in srgb, var(--color-text) 26%, transparent)'),
+        borderRadius: '5px', background: 'var(--color-neutral-50, #fff)',
+        color: 'var(--color-text)', font: 'inherit', fontSize: '16px', lineHeight: '25px',
+        outline: 'none',
+      },
+      examples: [
+        'Open my Shopify orders and list the ones still unfulfilled.',
+        'Find the oldest unanswered customer email and draft a reply.',
+        'Check which products have no description and write one for each.',
+        'Open example.com and tell me the main heading.',
+      ].map((text, i) => ({
+        key: 'ex' + i, text,
+        use: () => this.setState({ goalDraft: text, composerError: '' }),
+        style: {
+          background: 'transparent', font: 'inherit', fontSize: '13px', textAlign: 'left',
+          border: '1px solid color-mix(in srgb, var(--color-text) 20%, transparent)',
+          borderRadius: '999px', padding: '7px 14px', cursor: 'pointer',
+          color: 'color-mix(in srgb, var(--color-text) 78%, transparent)',
+        },
+        hoverStyle: { background: 'color-mix(in srgb, var(--color-text) 7%, transparent)' },
+      })),
       backlogHint: st.backlog ? 'close' : (liveUpdates.length + ' logged'),
       titleBtnStyle: {
         display: 'flex', alignItems: 'center', gap: '12px', background: 'transparent', border: 0,

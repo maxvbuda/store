@@ -31,6 +31,33 @@ RESOURCE_MAP = {
 EXT = {"application/javascript": ".js", "text/javascript": ".js",
        "text/css": ".css", "font/woff2": ".woff2"}
 
+# Replaces the demo CRM table. Same frame as the panel it replaces (1px border,
+# neutral-100 fill, uppercase micro-labels) so it reads as part of the design.
+COMPOSER = '''<sc-if value="{{ backlogOpen }}" hint-placeholder-val="{{ false }}">
+          <div style="flex: 1; min-height: 0; display: flex; flex-direction: column; border: 1px solid color-mix(in srgb, var(--color-text) 22%, transparent); background: var(--color-neutral-100); overflow: hidden;">
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 16px 28px; border-bottom: 2px solid var(--color-divider); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 50%, transparent);">
+              <span>Tell the agent what to do</span>
+              <span>{{ composerState }}</span>
+            </div>
+            <div style="flex: 1; min-height: 0; overflow: auto; padding: 26px 28px;">
+              <textarea value="{{ goalDraft }}" sc-camel-on-change="{{ setGoalDraft }}" sc-camel-on-key-down="{{ onGoalKey }}" placeholder="Open my Shopify orders and tell me which ones are still unfulfilled." style="{{ goalInputStyle }}"></textarea>
+              <div style="margin: 22px 0 11px; font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 45%, transparent);">Or start from one of these</div>
+              <div style="display: flex; flex-wrap: wrap; gap: 9px;">
+                <sc-for list="{{ examples }}" as="ex" hint-placeholder-count="4">
+                  <button sc-camel-on-click="{{ ex.use }}" style="{{ ex.style }}" style-hover="{{ ex.hoverStyle }}">{{ ex.text }}</button>
+                </sc-for>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 16px 28px; border-top: 2px solid var(--color-divider); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 45%, transparent);">
+              <span>{{ composerHint }}</span>
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <button sc-camel-on-click="{{ toggleBacklog }}" style="{{ ctrlStyle }}" style-hover="{{ ctrlHoverStyle }}">Cancel</button>
+                <button sc-camel-on-click="{{ submitGoal }}" style="{{ takeoverStyle }}" style-hover="{{ takeoverHoverStyle }}">{{ submitLabel }}</button>
+              </div>
+            </div>
+          </div>
+        </sc-if>'''
+
 
 def section(src: str, name: str) -> str:
     m = re.search(r'<script type="__bundler/%s">\s*(.*?)\s*</script>' % name, src, re.S)
@@ -64,6 +91,17 @@ def main() -> None:
     if not m:
         raise SystemExit("could not find the x-dc logic script")
     html = html[:m.start()] + m.group(1) + "\n" + LOGIC.read_text() + "\n" + m.group(3) + html[m.end():]
+
+    # Behind the title chevron the design put a CRM renewal table (Account /
+    # Renews / ARR / State) full of invented accounts. Nothing in this product
+    # produces that data, and it occupied the one full-height panel on the
+    # screen — so it becomes the goal composer, which is what was actually
+    # missing: a way to type what the agent should do.
+    n = len(re.findall(r'<sc-if value="\{\{ backlogOpen \}\}"', html))
+    if n != 1:
+        raise SystemExit("expected exactly one backlogOpen panel, found %d" % n)
+    html = re.sub(r'<sc-if value="\{\{ backlogOpen \}\}".*?</sc-if>',
+                  lambda _: COMPOSER, html, count=1, flags=re.S)
 
     # The digest header shipped as fixed copy ("Sunday 2 August", 47 tasks,
     # an eleven-hour summary). Bind each to the real run so Updates reflects
