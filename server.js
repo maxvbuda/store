@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * AutoStore AI — local dev server.
+ * Shop Agent — local dev server.
  *
  *   node server.js            # http://localhost:8787
  *
@@ -9,7 +9,10 @@
  * from .env next to this file; edits to .env are picked up on the next request,
  * so you can paste your key and just reload the page.
  *
- * No dependencies — Node 18+ (uses the built-in fetch).
+ * Accounts + sessions live in MongoDB — set MONGODB_URI in .env, or a local
+ * MongoDB at mongodb://127.0.0.1:27017 is used by default.
+ *
+ * Node 18+ (uses the built-in fetch). One dependency: mongodb.
  */
 'use strict';
 
@@ -223,7 +226,7 @@ async function askModel(body) {
       Authorization: 'Bearer ' + key,
       'Content-Type': 'application/json',
       'HTTP-Referer': 'http://localhost:' + PORT,
-      'X-Title': 'AutoStore AI (local)',
+      'X-Title': 'Shop Agent (local)',
     },
     body: JSON.stringify(p),
     signal: AbortSignal.timeout(180000),
@@ -270,6 +273,80 @@ async function askModel(body) {
   }
 }
 
+// ------------------------------------------------------- Shopify MCP
+
+const SHOPIFY_MCP_PATHS = ['/api/mcp', '/api/ucp/mcp'];
+
+function normalizeStoreDomain(raw) {
+  raw = String(raw || '').trim();
+  if (!raw) return '';
+  if (!/^https?:\/\//i.test(raw)) raw = 'https://' + raw;
+  try { return new URL(raw).host; } catch (e) { return ''; }
+}
+
+/**
+ * Storefront password protection is bypassed the way Shopify itself
+ * documents it: HTTP Basic auth with the fixed username "shopify" and the
+ * store's storefront password. Domain + password come from the signed-in
+ * user's own account (set during onboarding) — every user talks to their
+ * own store, never a shared one. This call is server-side only, so the
+ * password never reaches the browser.
+ */
+async function shopifyMcpRequest(path, payload, domain, password) {
+  const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
+  if (password) headers.Authorization = 'Basic ' + Buffer.from('shopify:' + password).toString('base64');
+
+  const r = await fetch('https://' + domain + path, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload || {}),
+    // Manual redirect handling: Shopify's password gate responds to a
+    // locked-out request with a redirect to the login page. Following it
+    // would silently hand back an HTML login form instead of the MCP
+    // response, so treat any 3xx here as "still gated" and surface that.
+    redirect: 'manual',
+    signal: AbortSignal.timeout(20000),
+  });
+
+  if (r.status >= 300 && r.status < 400) {
+    throw new Error(path + ' redirected — still behind the password gate. Check the store password in Settings.');
+  }
+  return r;
+}
+
+/** Loops the MCP request across /api/mcp and /api/ucp/mcp for the caller's own connected store. */
+async function handleShopifyMcp(req, res) {
+  const user = await auth.currentUser(req);
+  if (!user) return send(res, 401, { error: 'Sign in first.' });
+
+  let body;
+  try { body = await readBody(req); } catch (e) { return send(res, 400, { error: String(e.message) }); }
+
+  const setup = user.setup || {};
+  const domain = normalizeStoreDomain(setup.storeUrl);
+  if (!domain) return send(res, 400, { error: 'No Shopify store connected yet — add your store URL during onboarding.' });
+  const password = setup.storePassword || '';
+
+  const payload = body.payload !== undefined ? body.payload : body;
+  const paths = body.endpoint === 'mcp' ? ['/api/mcp']
+    : body.endpoint === 'ucp' ? ['/api/ucp/mcp']
+    : SHOPIFY_MCP_PATHS;
+
+  let lastError;
+  for (const path of paths) {
+    try {
+      const r = await shopifyMcpRequest(path, payload, domain, password);
+      if (r.status === 404) { lastError = new Error(path + ' returned 404'); continue; }
+      const data = await r.json().catch(() => null);
+      if (!r.ok) { lastError = new Error((data && data.error) || ('HTTP ' + r.status + ' from ' + path)); continue; }
+      return send(res, 200, { ok: true, endpoint: path, data });
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  send(res, 502, { ok: false, error: String((lastError && lastError.message) || lastError || 'Shopify MCP request failed') });
+}
+
 /** Real reachability check for the storefront URL typed during onboarding. */
 async function handleCheckStore(req, res) {
   let body;
@@ -284,7 +361,7 @@ async function handleCheckStore(req, res) {
   try {
     const r = await fetch(url.origin, {
       redirect: 'follow',
-      headers: { 'User-Agent': 'AutoStore-AI-local/1.0' },
+      headers: { 'User-Agent': 'ShopAgent-local/1.0' },
       signal: AbortSignal.timeout(10000),
     });
     let title = '';
@@ -301,6 +378,7 @@ async function handleCheckStore(req, res) {
 
 // ---------------------------------------------------------------- serve
 
+<<<<<<< HEAD
 // Accounts + the shared-password gate.
 const auth = require('./lib/auth').create(env, send, readBody);
 // The agent's Chromium (Python sidecar, spawned on first use).
@@ -310,9 +388,14 @@ const agent = require('./lib/agent').create(env, send, readBody, browser, askMod
 process.on('exit', () => browser.stop());
 process.on('SIGINT', () => { browser.stop(); process.exit(0); });
 process.on('SIGTERM', () => { browser.stop(); process.exit(0); });
+=======
+// Accounts + the shared-password gate. Assigned once MongoDB connects,
+// below — request handling never starts until that's done.
+let auth;
+>>>>>>> ae3cfb10c49a13a2b0bf81a7b96cc616ee719fdc
 
 const UNLOCK_PAGE = `<!doctype html><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>AutoStore AI</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Shop Agent</title>
 <style>
  *{box-sizing:border-box} body{margin:0;min-height:100vh;display:flex;align-items:center;
    justify-content:center;background:#f4f4f2;font:15px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;color:#111}
@@ -322,7 +405,7 @@ const UNLOCK_PAGE = `<!doctype html><meta charset="utf-8">
  button{width:100%;padding:12px;border:0;background:#ec3013;color:#fff;font-size:15px;font-weight:600;cursor:pointer}
  .err{color:#ec3013;font-size:13px;min-height:18px;margin-top:8px}
 </style>
-<form id="f"><h1>AutoStore AI</h1><p>This instance is password protected.</p>
+<form id="f"><h1>Shop Agent</h1><p>This instance is password protected.</p>
 <input id="p" type="password" placeholder="Password" autofocus autocomplete="current-password">
 <button>Unlock</button><div class="err" id="e"></div></form>
 <script>
@@ -374,6 +457,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/models') return handleModels(res);
     if (url.pathname === '/api/llm' && req.method === 'POST') return handleLLM(req, res);
     if (url.pathname === '/api/check-store' && req.method === 'POST') return handleCheckStore(req, res);
+    if (url.pathname === '/api/shopify-mcp' && req.method === 'POST') return handleShopifyMcp(req, res);
     if (url.pathname.startsWith('/api/')) return send(res, 404, { error: 'unknown endpoint' });
     serveStatic(req, res, url.pathname);
   } catch (e) {
@@ -382,6 +466,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+<<<<<<< HEAD
 // Two servers on one port is the fault behind most "503 / stuck starting"
 // reports: the second one keeps respawning a sidecar that can never bind.
 server.on('error', (e) => {
@@ -406,4 +491,28 @@ server.listen(PORT, HOST, () => {
     console.log('\n  ⚠  APP_PASSWORD is not set — /api/llm is OPEN.');
     console.log('     Fine on localhost; set it before exposing this publicly.\n');
   }
+=======
+(async () => {
+  auth = await require('./lib/auth').create(env, send, readBody);
+
+  server.listen(PORT, HOST, async () => {
+    const key = apiKey();
+    console.log('Shop Agent  →  http://localhost:' + PORT);
+    console.log('  app dir : ' + APP_DIR);
+    console.log('  env file: ' + ENV_FILE + (fs.existsSync(ENV_FILE) ? '' : '  (missing)'));
+    console.log('  API key : ' + (key ? 'set (' + key.length + ' chars)' : 'NOT SET — AI features are off'));
+    console.log('  mongodb : ' + env('MONGODB_URI', 'mongodb://127.0.0.1:27017/shop-agent'));
+    console.log('  accounts: ' + await auth.store.count());
+    console.log('  gate    : ' + (auth.gatePassword() ? 'ON — password required' : 'OFF'));
+    if (!key) console.log('\n  Add this line to .env, then just reload the page:\n    OPENROUTER_API_KEY=sk-or-v1-...\n');
+    if (!auth.gatePassword()) {
+      console.log('\n  ⚠  APP_PASSWORD is not set — /api/llm is OPEN.');
+      console.log('     Fine on localhost; set it before exposing this publicly.\n');
+    }
+  });
+})().catch((e) => {
+  console.error('[startup] Could not connect to MongoDB: ' + e.message);
+  console.error('  Set MONGODB_URI in .env — defaults to mongodb://127.0.0.1:27017/shop-agent for local dev.');
+  process.exit(1);
+>>>>>>> ae3cfb10c49a13a2b0bf81a7b96cc616ee719fdc
 });
