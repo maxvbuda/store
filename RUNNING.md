@@ -1,10 +1,13 @@
-# Running AutoStore AI locally
+# Running Shop Agent locally
 
 ```bash
+npm install
 node server.js          # http://localhost:8787
 ```
 
-Node 18+ only. No `npm install` — the server has no dependencies.
+Node 18+. Accounts + sessions live in Supabase — set `SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` in `.env`, and run `supabase/schema.sql` in the
+Supabase SQL editor once before first use.
 
 **For the agent browser** (the computer-use console at `/`) you also need Python:
 
@@ -13,8 +16,8 @@ python3 -m pip install -r requirements.txt
 python3 -m playwright install chromium     # the browser binary; pip won't fetch it
 ```
 
-Everything else — accounts, the store app at `/app`, the OpenRouter proxy —
-works without those.
+Everything else — the store app at `/app`, the OpenRouter proxy — works
+without Python.
 
 ## Giving it your OpenRouter key
 
@@ -54,7 +57,7 @@ the server adds the `Authorization` header when it forwards to OpenRouter.
 | Billing | plan switch | Saves locally. **Not** wired to Stripe — no Stripe account is connected. |
 
 Everything except billing survives a reload (`localStorage`). To reset:
-`localStorage.removeItem('autostore.state.v1')` in the browser console.
+`localStorage.removeItem('shopagent.state.v1')` in the browser console.
 
 ## Editing
 

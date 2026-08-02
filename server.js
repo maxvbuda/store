@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * AutoStore AI — local dev server.
+ * Shop Agent — local dev server.
  *
  *   node server.js            # http://localhost:8787
  *
@@ -9,7 +9,10 @@
  * from .env next to this file; edits to .env are picked up on the next request,
  * so you can paste your key and just reload the page.
  *
- * No dependencies — Node 18+ (uses the built-in fetch).
+ * Accounts + sessions live in Supabase Postgres — set SUPABASE_URL and
+ * SUPABASE_SERVICE_ROLE_KEY in .env, and run supabase/schema.sql once.
+ *
+ * Node 18+ (uses the built-in fetch). Dependencies: @supabase/supabase-js.
  */
 'use strict';
 
@@ -223,7 +226,7 @@ async function askModel(body) {
       Authorization: 'Bearer ' + key,
       'Content-Type': 'application/json',
       'HTTP-Referer': 'http://localhost:' + PORT,
-      'X-Title': 'AutoStore AI (local)',
+      'X-Title': 'Shop Agent (local)',
     },
     body: JSON.stringify(p),
     signal: AbortSignal.timeout(180000),
@@ -285,7 +288,7 @@ async function handleCheckStore(req, res) {
   try {
     const r = await fetch(url.origin, {
       redirect: 'follow',
-      headers: { 'User-Agent': 'AutoStore-AI-local/1.0' },
+      headers: { 'User-Agent': 'ShopAgent-local/1.0' },
       signal: AbortSignal.timeout(10000),
     });
     let title = '';
@@ -302,8 +305,9 @@ async function handleCheckStore(req, res) {
 
 // ---------------------------------------------------------------- serve
 
-// Accounts + the shared-password gate.
-const auth = require('./lib/auth').create(env, send, readBody);
+// Accounts + the shared-password gate. Assigned once Supabase is reachable,
+// below — request handling never starts until that's done.
+let auth;
 // The agent's Chromium (Python sidecar, spawned on first use).
 const browser = require('./lib/browser').create(env, send, readBody);
 // The agent loop runs here, not in the page, so a closed tab doesn't kill it.
@@ -327,7 +331,7 @@ process.on('SIGINT', () => { browser.stop(); process.exit(0); });
 process.on('SIGTERM', () => { browser.stop(); process.exit(0); });
 
 const UNLOCK_PAGE = `<!doctype html><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>AutoStore AI</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Shop Agent</title>
 <style>
  *{box-sizing:border-box} body{margin:0;min-height:100vh;display:flex;align-items:center;
    justify-content:center;background:#f4f4f2;font:15px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;color:#111}
@@ -337,7 +341,7 @@ const UNLOCK_PAGE = `<!doctype html><meta charset="utf-8">
  button{width:100%;padding:12px;border:0;background:#ec3013;color:#fff;font-size:15px;font-weight:600;cursor:pointer}
  .err{color:#ec3013;font-size:13px;min-height:18px;margin-top:8px}
 </style>
-<form id="f"><h1>AutoStore AI</h1><p>This instance is password protected.</p>
+<form id="f"><h1>Shop Agent</h1><p>This instance is password protected.</p>
 <input id="p" type="password" placeholder="Password" autofocus autocomplete="current-password">
 <button>Unlock</button><div class="err" id="e"></div></form>
 <script>
@@ -416,6 +420,7 @@ server.on('error', (e) => {
   throw e;
 });
 
+<<<<<<< HEAD
 server.listen(PORT, HOST, () => {
   const key = apiKey();
   console.log('AutoStore AI  →  http://localhost:' + PORT);
@@ -430,4 +435,28 @@ server.listen(PORT, HOST, () => {
     console.log('\n  ⚠  APP_PASSWORD is not set — /api/llm is OPEN.');
     console.log('     Fine on localhost; set it before exposing this publicly.\n');
   }
+=======
+(async () => {
+  auth = await require('./lib/auth').create(env, send, readBody);
+
+  server.listen(PORT, HOST, async () => {
+    const key = apiKey();
+    console.log('Shop Agent  →  http://localhost:' + PORT);
+    console.log('  app dir : ' + APP_DIR);
+    console.log('  env file: ' + ENV_FILE + (fs.existsSync(ENV_FILE) ? '' : '  (missing)'));
+    console.log('  API key : ' + (key ? 'set (' + key.length + ' chars)' : 'NOT SET — AI features are off'));
+    console.log('  supabase: ' + ((env('SUPABASE_URL', '') || env('NEXT_PUBLIC_SUPABASE_URL', '')) ? 'configured' : 'NOT SET'));
+    console.log('  accounts: ' + await auth.store.count());
+    console.log('  gate    : ' + (auth.gatePassword() ? 'ON — password required' : 'OFF'));
+    if (!key) console.log('\n  Add this line to .env, then just reload the page:\n    OPENROUTER_API_KEY=sk-or-v1-...\n');
+    if (!auth.gatePassword()) {
+      console.log('\n  ⚠  APP_PASSWORD is not set — /api/llm is OPEN.');
+      console.log('     Fine on localhost; set it before exposing this publicly.\n');
+    }
+  });
+})().catch((e) => {
+  console.error('[startup] Could not connect to Supabase: ' + e.message);
+  console.error('  Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.');
+  process.exit(1);
+>>>>>>> 121e0b062f78eaf865421bf7fdf7d0b2f3dcf2c2
 });

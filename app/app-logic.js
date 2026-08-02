@@ -3,7 +3,7 @@ class Component extends DCLogic {
     super(props);
     const h = 3600000, m = 60000;
     this.TASKS = ['Watching your store', 'Monitoring the support inbox', 'Reviewing catalog copy'];
-    this.STORAGE_KEY = 'autostore.state.v1';
+    this.STORAGE_KEY = 'shopagent.state.v1';
 
     const base = {
       screen: null, onbStep: 1, panelOpen: true, feedPaused: false,
@@ -18,9 +18,10 @@ class Component extends DCLogic {
       genItems: [],
       user: null, loginEmail: '', loginPassword: '', authBusy: false,
       selTicket: null, reqText: '', mkTopic: '', mkType: 'Instagram post', mkBusy: false,
-      onbUrl: '', onbConnected: false, rewrite: 'now',
+      catalogQuery: '',
+      onbUrl: '', onbStorePassword: '', onbConnected: false, rewrite: 'now',
       autoLevel: 'Approve first', voice: 'Warm', refundCap: '50', discountCap: '20',
-      uploads: {}, plan: 'Growth',
+      uploads: {}, plan: 'pro',
     };
 
     this.state = Object.assign(base, this.loadSaved());
@@ -311,6 +312,21 @@ class Component extends DCLogic {
     for (const sku of todo) await this.genDesc(sku);   // sequential — avoids rate limits
   }
 
+  /**
+   * Sends the store owner to the live agent browser with the search already
+   * queued, instead of a one-shot MCP API call — the agent actually opens
+   * the store and searches it the way a person would, in the browser you
+   * can watch at / , rather than an invisible request/response.
+   */
+  searchCatalog() {
+    const query = this.state.catalogQuery.trim();
+    if (!query) { this.toast('Type a search', 'e.g. "wireless earbuds" or a product name'); return; }
+    const store = this.state.onbUrl.trim();
+    const goal = (store ? `Go to https://${store} and search` : 'Search')
+      + ` the catalog for "${query}". Report what you find — name, price, and a short description for each.`;
+    window.location.href = '/?goal=' + encodeURIComponent(goal) + '&autostart=1';
+  }
+
   // -------------------------------------------------------------- support
 
   ticketView(tk) {
@@ -487,7 +503,7 @@ class Component extends DCLogic {
     if (st.user) {
       try {
         const r = await this.api('/api/account/setup', {
-          storeUrl: st.onbUrl, voice: st.voice, autoLevel: st.autoLevel,
+          storeUrl: st.onbUrl, storePassword: st.onbStorePassword, voice: st.voice, autoLevel: st.autoLevel,
           refundCap: st.refundCap, discountCap: st.discountCap,
         });
         this.setState({ user: r.user });
@@ -537,8 +553,23 @@ class Component extends DCLogic {
     const voiceSamples = { Plain: 'Your order shipped. Tracking: 9400 1102.', Warm: 'Good news — your order\'s on its way. Track it here.', Bold: 'It\'s out the door. Watch the mail like a hawk.' };
     const missingPhotos = st.products.filter(p => !p.desc).map(p => p.sku);
 
+    const PLANS = [
+      { id: 'starter', name: 'Starter', price: 15 },
+      { id: 'pro', name: 'Pro', price: 28 },
+      { id: 'max', name: 'Max', price: 56 },
+    ];
+    const currentPlan = PLANS.find(p => p.id === st.plan) || PLANS[1];
+
     return {
       storeName, storeInit: storeName.split(/[\s&]+/).filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase(),
+      planName: currentPlan.name, planPrice: currentPlan.price,
+      planOptions: PLANS.map(p => ({
+        id: p.id, name: p.name, price: p.price,
+        active: p.id === currentPlan.id,
+        border: p.id === currentPlan.id ? 'var(--color-accent)' : 'var(--color-divider)',
+        color: p.id === currentPlan.id ? 'var(--color-accent)' : 'var(--color-neutral-600)',
+        pick: () => this.setState({ plan: p.id }),
+      })),
       isLogin: screen === 'login', isOnboarding: screen === 'onboarding', isApp,
       scDashboard: screen === 'dashboard', scProducts: screen === 'products', scOrders: screen === 'orders',
       scMarketing: screen === 'marketing', scSupport: screen === 'support', scRequests: screen === 'requests', scBilling: screen === 'billing',
@@ -572,11 +603,9 @@ class Component extends DCLogic {
       brandLine: storeName + (st.onbConnected && st.onbUrl ? ' · ' + st.onbUrl : ''),
       skipLabel: 'Skip for now',
       // The markup had this wired to signIn, which became a real login attempt
-      // once accounts existed — so it failed on empty fields. It just skips.
-      skipSetup: () => {
-        this.setState({ screen: 'dashboard' });
-        this.toast('Setup skipped', 'You can finish it any time from Onboarding.');
-      },
+      // once accounts existed — so it failed on empty fields. Saves whatever
+      // was typed (same as finishing setup) rather than discarding it.
+      skipSetup: () => this.launchAgent(),
       connectedLine: st.onbUrl ? 'Connected to ' + st.onbUrl : 'Not connected yet',
       resolvedRatio: st.tickets.length
         ? st.tickets.filter(t => t.st === 'resolved' || t.st === 'sent').length + ' of ' + st.tickets.length
@@ -621,6 +650,8 @@ class Component extends DCLogic {
         };
       }),
       genAllDesc: () => this.genAllDesc(),
+      catalogQuery: st.catalogQuery, setCatalogQuery: e => this.setState({ catalogQuery: e.target.value }),
+      searchCatalog: () => this.searchCatalog(),
 
       tickets: st.tickets.map(t => this.ticketView(t)),
       ticketOpen: !!selV,
@@ -689,6 +720,7 @@ class Component extends DCLogic {
       onbNext: () => this.setState(s => ({ onbStep: s.onbStep + 1 })),
       onbNextDisabled: st.onbStep === 1 && !st.onbConnected,
       onbUrl: st.onbUrl, setOnbUrl: e => this.setState({ onbUrl: e.target.value }),
+      onbStorePassword: st.onbStorePassword, setOnbStorePassword: e => this.setState({ onbStorePassword: e.target.value }),
       onbConnected: st.onbConnected, connectLabel: st.onbConnected ? 'Connected' : 'Connect',
       connectStore: () => this.connectStore(),
 

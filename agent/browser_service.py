@@ -56,7 +56,12 @@ START_URL = os.environ.get("BROWSER_START_URL",
                            "http://127.0.0.1:8787/agent-start.html")
 
 lock = threading.Lock()
-state = {"ctx": None, "page": None, "pw": None}
+# last_launch_error survives teardown() (which nulls page/ctx/pw) so /state
+# can tell "never tried yet, that's fine" apart from "tried and it's broken"
+# — otherwise both look identical (page is None) and the parent never learns
+# a restart won't help until the underlying problem (e.g. Chromium missing)
+# is actually fixed.
+state = {"ctx": None, "page": None, "pw": None, "last_launch_error": None}
 
 # Runs in the page. Returns the visible interactive controls with their centre
 # coordinates, plus the readable text — enough for a text-only model to decide
@@ -184,11 +189,14 @@ def ensure(headless: bool):
             # Without this, the retry path trips Playwright's asyncio guard and
             # reports "Sync API inside the asyncio loop", which is nonsense here.
             teardown()
-            raise RuntimeError(
+            state["last_launch_error"] = (
                 "Chromium is not installed for Playwright. Run:  "
-                "python3 -m playwright install chromium") from None
+                "python3 -m playwright install chromium")
+            raise RuntimeError(state["last_launch_error"]) from None
         teardown()
+        state["last_launch_error"] = msg[:200]
         raise
+<<<<<<< HEAD
     # Close anything the profile restored, then work from one known tab.
     pages = list(state["ctx"].pages)
     state["page"] = pages[0] if pages else state["ctx"].new_page()
@@ -197,6 +205,10 @@ def ensure(headless: bool):
             extra.close()
         except Exception:
             pass
+=======
+    state["last_launch_error"] = None
+    state["page"] = state["ctx"].pages[0] if state["ctx"].pages else state["ctx"].new_page()
+>>>>>>> 121e0b062f78eaf865421bf7fdf7d0b2f3dcf2c2
     if _stealth is not None:
         try:
             _stealth.apply_stealth_sync(state["page"])
@@ -302,7 +314,10 @@ class Handler(BaseHTTPRequestHandler):
                 with lock:
                     page = state["page"]
                     if page is None:
-                        return self._json(200, {"running": False, "healthy": False})
+                        resp = {"running": False, "healthy": False}
+                        if state["last_launch_error"]:
+                            resp["error"] = state["last_launch_error"]
+                        return self._json(200, resp)
                     try:
                         # Touch the page: if Chromium died under us, this raises
                         # and we report unhealthy so the parent can restart us.

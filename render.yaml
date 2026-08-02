@@ -1,10 +1,13 @@
 services:
   - type: web
-    name: autostore-ai
+    name: shop-agent
     runtime: node
     plan: free
-    # app/index.html is committed, so no Python build step is needed here.
-    buildCommand: ""
+    # Installs the Node deps, then the Python side (agent browser + Playwright's
+    # Chromium) needed by the computer-use console at /. No --with-deps: that
+    # flag shells out to apt-get as root, which Render's build sandbox
+    # refuses non-interactively ("su: Authentication failure").
+    buildCommand: "npm install && pip install -r requirements.txt && python3 -m playwright install chromium"
     startCommand: node server.js
     envVars:
       # Set the value in the Render dashboard — never commit the key.
@@ -16,3 +19,9 @@ services:
         value: medium
       - key: OPENROUTER_MAX_TOKENS
         value: "4000"
+      # Supabase project's Settings > API page. Run supabase/schema.sql in
+      # the SQL editor once before first use.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false

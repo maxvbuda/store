@@ -395,6 +395,15 @@ async function pollAgent() {
 }
 setInterval(pollAgent, 1500);
 pollAgent();
+
+// A goal can arrive via the URL (e.g. from the Shopify catalog search on the
+// store app) instead of being typed here. ?autostart=1 runs it immediately.
+const qp = new URLSearchParams(location.search);
+const qGoal = qp.get('goal');
+if (qGoal) {
+  $('goal').value = qGoal;
+  if (qp.get('autostart') === '1') $('run').click();
+}
 </script>
 </body>
 </html>
