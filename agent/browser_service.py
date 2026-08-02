@@ -189,16 +189,30 @@ def ensure(headless: bool):
                 "python3 -m playwright install chromium") from None
         teardown()
         raise
-    state["page"] = state["ctx"].pages[0] if state["ctx"].pages else state["ctx"].new_page()
+    # Close anything the profile restored, then work from one known tab.
+    pages = list(state["ctx"].pages)
+    state["page"] = pages[0] if pages else state["ctx"].new_page()
+    for extra in pages[1:]:
+        try:
+            extra.close()
+        except Exception:
+            pass
     if _stealth is not None:
         try:
             _stealth.apply_stealth_sync(state["page"])
         except Exception:
             pass
+    # Always land on the start page. This used to swallow every failure, so a
+    # restored tab from a previous session stayed on screen and looked like the
+    # browser had a mind of its own.
     try:
         state["page"].goto(START_URL, wait_until="domcontentloaded", timeout=30000)
-    except Exception:
-        pass
+    except Exception as e:
+        print("could not open the start page (%s) — retrying once" % str(e)[:90], flush=True)
+        try:
+            state["page"].goto(START_URL, wait_until="commit", timeout=20000)
+        except Exception as e2:
+            print("start page still unreachable: %s" % str(e2)[:90], flush=True)
     return state["page"]
 
 
@@ -210,6 +224,11 @@ def _launch(headless: bool):
         headless=headless,
         viewport={"width": 1280, "height": 800},
         no_viewport=False,
+        # Without these the profile restores whatever was open last — which is
+        # why a page from an earlier test kept coming back on every launch.
+        # Cookies and logins still persist; only tab restore is suppressed.
+        args=["--hide-crash-restore-bubble", "--no-first-run", "--no-default-browser-check"],
+        ignore_default_args=["--restore-last-session"],
     )
     # NOT "chrome" by default: if the user already has Google Chrome open,
     # a second Chrome with a different profile delegates to the running
