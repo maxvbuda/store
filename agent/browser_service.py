@@ -280,8 +280,18 @@ def _attach_screencast():
 
 def ensure(headless: bool):
     """(worker thread) Start Chromium once; reuse it afterwards."""
-    if state["page"] is not None:
-        return state["page"]
+    page = state["page"]
+    if page is not None:
+        # A page that has closed under us (renderer crash, target gone) must not
+        # be handed back — every op on it throws "Target page has been closed".
+        # Tear it down so the relaunch below gives callers a live page instead
+        # of waiting on the 5-minute watchdog.
+        try:
+            if not page.is_closed():
+                return page
+        except Exception:
+            pass
+        teardown()
     PROFILE.mkdir(parents=True, exist_ok=True)
     reap_orphans()
     # A hard-killed Chromium leaves Singleton* behind and the next launch hangs
@@ -361,6 +371,22 @@ def _launch(headless: bool):
         args=["--hide-crash-restore-bubble", "--no-first-run", "--no-default-browser-check"],
         ignore_default_args=["--restore-last-session"],
     )
+    # A residential/mobile proxy is the one thing that defeats Cloudflare on a
+    # cloud server: the challenge is triggered by the datacenter IP, not the
+    # browser, so no amount of stealth fixes it — a residential exit IP does.
+    #   BROWSER_PROXY=http://user:pass@host:port   (or socks5://…)
+    proxy = os.environ.get("BROWSER_PROXY", "").strip()
+    if proxy:
+        from urllib.parse import urlparse
+        u = urlparse(proxy)
+        server = "%s://%s%s" % (u.scheme or "http", u.hostname or "",
+                                ":%d" % u.port if u.port else "")
+        kwargs["proxy"] = {"server": server}
+        if u.username:
+            kwargs["proxy"]["username"] = u.username
+        if u.password:
+            kwargs["proxy"]["password"] = u.password
+        print("routing through proxy %s" % server, flush=True)
     # NOT "chrome" by default: if the user already has Google Chrome open,
     # a second Chrome with a different profile delegates to the running
     # instance and exits, leaving a dead page and blank screenshots.
