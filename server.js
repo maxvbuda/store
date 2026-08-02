@@ -307,6 +307,18 @@ const auth = require('./lib/auth').create(env, send, readBody);
 // The agent's Chromium (Python sidecar, spawned on first use).
 const browser = require('./lib/browser').create(env, send, readBody);
 // The agent loop runs here, not in the page, so a closed tab doesn't kill it.
+// A background task must never take the server down. Node exits on an
+// unhandled rejection by default, which is how the server died silently mid
+// health-check: no stack, no log line, just gone.
+process.on('unhandledRejection', (err) => {
+  console.error('[fatal-guard] unhandled rejection:', (err && err.stack) || err);
+  try { watch.record('http', 'unhandled rejection: ' + ((err && err.message) || err)); } catch (e) {}
+});
+process.on('uncaughtException', (err) => {
+  console.error('[fatal-guard] uncaught exception:', (err && err.stack) || err);
+  try { watch.record('http', 'uncaught exception: ' + ((err && err.message) || err)); } catch (e) {}
+});
+
 // Error recording + a watchdog that restarts a wedged browser on its own.
 const watch = require('./lib/watch').create(env, send, readBody, browser);
 const agent = require('./lib/agent').create(env, send, readBody, browser, askModel, watch.record);

@@ -372,6 +372,12 @@ def main():
     args = ap.parse_args()
 
     import signal
+    # A killed browser can leave the driver writing to a dead pipe. Default
+    # SIGPIPE handling kills us mid-recovery; ignoring it lets teardown run.
+    try:
+        signal.signal(signal.SIGPIPE, signal.SIG_IGN)
+    except (AttributeError, ValueError):
+        pass
     signal.signal(signal.SIGTERM, _on_signal)
     signal.signal(signal.SIGINT, _on_signal)
 
