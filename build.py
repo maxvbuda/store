@@ -221,6 +221,25 @@ def main() -> None:
             print("   -", x)
 
     out = APP / "index.html"
+
+    # Tripwire. app/index.html's markup carries hand-edits that exist in no
+    # template (Shop Agent branding, the trial badges, the onboarding
+    # store-password field, the Products catalog search, the removed Billing
+    # screen). Regenerating from the stale bundle silently destroys all of
+    # them — it happened once. Refuse to overwrite a page that has features
+    # the freshly built one lacks; update the template (or this script's
+    # replacement maps) first, then delete the sentinel from this list.
+    SENTINELS = ["Trial expiring in", "Search the catalog", "storePassword"]
+    if out.exists():
+        current = out.read_text()
+        lost = [s for s in SENTINELS if s in current and s not in html]
+        if lost:
+            raise SystemExit(
+                "REFUSING to overwrite %s — the rebuilt page would lose "
+                "hand-edited features still live in the current one: %s\n"
+                "Back-port them into the template or this script first."
+                % (out, ", ".join(repr(s) for s in lost)))
+
     out.write_text(html)
     print("wrote %s (%d KB)" % (out, len(html) // 1024))
     print("assets:", ", ".join(sorted(ASSETS.values())))

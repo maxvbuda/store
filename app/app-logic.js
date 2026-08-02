@@ -22,6 +22,8 @@ class Component extends DCLogic {
       onbUrl: '', onbStorePassword: '', onbConnected: false, rewrite: 'now',
       autoLevel: 'Approve first', voice: 'Warm', refundCap: '50', discountCap: '20',
       uploads: {}, plan: 'pro',
+      isSubscribed: false, isFreeTrial: true, freeTrialDays: 14, subscriptionStatus: 'trial',
+      trialStartDate: null,
     };
 
     this.state = Object.assign(base, this.loadSaved());
@@ -37,6 +39,52 @@ class Component extends DCLogic {
       if (this.state.cutoff - Date.now() < 1000) s.cutoff = Date.now() + 2.5 * 3600000;
       this.setState(s);
     }, 1000);
+
+    // Monthly service renewal check for auto-renewal
+    this.serviceCheck = setInterval(() => {
+      const st = this.state;
+      if (st.isSubscribed) {
+        const lastBilling = localStorage.getItem('lastBillingDate');
+        const now = Date.now();
+        const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+        
+        if (lastBilling && (now - parseInt(lastBilling)) > thirtyDays) {
+          // Auto-renew monthly
+          this.toast('Monthly renewal', 'Your subscription has been renewed for another month.');
+          localStorage.setItem('lastBillingDate', String(now));
+        } else if (!lastBilling) {
+          localStorage.setItem('lastBillingDate', String(now));
+        }
+      }
+    }, 60 * 60 * 1000); // Check every hour
+
+    // Free trial countdown
+    this.trialCheck = setInterval(() => {
+      const st = this.state;
+      if (st.isFreeTrial && !st.isSubscribed) {
+        const trialStart = localStorage.getItem('trialStartDate');
+        if (!trialStart) {
+          localStorage.setItem('trialStartDate', String(Date.now()));
+          this.setState({ trialStartDate: Date.now() });
+        } else {
+          const trialStartTime = parseInt(trialStart);
+          const now = Date.now();
+          const daysPassed = Math.floor((now - trialStartTime) / (24 * 60 * 60 * 1000));
+          const daysRemaining = 14 - daysPassed;
+          
+          if (daysRemaining <= 0) {
+            // Trial expired
+            this.setState({ isFreeTrial: false, freeTrialDays: 0, subscriptionStatus: 'expired' });
+            this.toast('Trial expired', 'Your free trial has ended. Please subscribe to continue.');
+            if (this.curScreen() !== 'login') {
+              this.setState({ screen: 'login' });
+            }
+          } else {
+            this.setState({ freeTrialDays: daysRemaining });
+          }
+        }
+      }
+    }, 60 * 1000); // Check every minute
 
     this.checkAI();
     this.checkAuth();
@@ -98,7 +146,7 @@ class Component extends DCLogic {
     this.toast('Signed out', 'See you next time.');
   }
 
-  componentWillUnmount() { clearInterval(this.clock); }
+  componentWillUnmount() { clearInterval(this.clock); clearInterval(this.serviceCheck); clearInterval(this.trialCheck); }
 
   componentDidUpdate() { this.save(); }
 
@@ -111,9 +159,27 @@ class Component extends DCLogic {
       const s = JSON.parse(raw);
       const keep = ['screen', 'products', 'orders', 'tickets', 'requests', 'genItems', 'feed', 'plan',
         'voice', 'autoLevel', 'refundCap', 'discountCap', 'uploads', 'onbConnected', 'onbUrl',
-        'rewrite', 'actionCount', 'mkType'];
+        'rewrite', 'actionCount', 'mkType', 'isSubscribed', 'isFreeTrial', 'freeTrialDays', 'subscriptionStatus', 'trialStartDate', 'subscriptionStatus'];
       const out = {};
       keep.forEach(k => { if (s[k] !== undefined) out[k] = s[k]; });
+      // Check localStorage for subscription status
+      if (localStorage.getItem('userSubscribed') === 'true') {
+        out.isSubscribed = true;
+      }
+      // Check trial status on load
+      if (out.isFreeTrial && !out.isSubscribed) {
+        const trialStart = localStorage.getItem('trialStartDate');
+        if (trialStart) {
+          const daysPassed = Math.floor((Date.now() - parseInt(trialStart)) / (24 * 60 * 60 * 1000));
+          if (daysPassed >= 14) {
+            out.isFreeTrial = false;
+            out.freeTrialDays = 0;
+            out.subscriptionStatus = 'expired';
+          } else {
+            out.freeTrialDays = 14 - daysPassed;
+          }
+        }
+      }
       // never restore a transient "working" flag
       if (out.products) out.products = out.products.map(p => p.st === 'generating' ? { ...p, st: p.desc ? 'generated' : 'draft' } : p);
       return out;
@@ -316,7 +382,7 @@ class Component extends DCLogic {
    * Sends the store owner to the live agent browser with the search already
    * queued, instead of a one-shot MCP API call — the agent actually opens
    * the store and searches it the way a person would, in the browser you
-   * can watch at / , rather than an invisible request/response.
+   * can watch at /console , rather than an invisible request/response.
    */
   searchCatalog() {
     const query = this.state.catalogQuery.trim();
@@ -324,7 +390,7 @@ class Component extends DCLogic {
     const store = this.state.onbUrl.trim();
     const goal = (store ? `Go to https://${store} and search` : 'Search')
       + ` the catalog for "${query}". Report what you find — name, price, and a short description for each.`;
-    window.location.href = '/?goal=' + encodeURIComponent(goal) + '&autostart=1';
+    window.location.href = '/console?goal=' + encodeURIComponent(goal) + '&autostart=1';
   }
 
   // -------------------------------------------------------------- support
@@ -590,7 +656,7 @@ class Component extends DCLogic {
 
       navItems: [
         ['dashboard', 'Dashboard'], ['products', 'Products'], ['orders', 'Orders'], ['marketing', 'Marketing'],
-        ['support', 'Support'], ['requests', 'Requests'], ['billing', 'Billing'],
+        ['support', 'Support'], ['requests', 'Requests'],
       ].map((n, i) => ({
         num: '0' + (i + 1), label: n[1], go: () => this.go(n[0]),
         color: screen === n[0] ? 'var(--color-accent)' : 'inherit',
@@ -688,20 +754,6 @@ class Component extends DCLogic {
       agentName: aiOn ? prettyModel(st.ai.model) : 'The agent',
       mkGenerate: () => this.mkGenerate(),
       genItems: st.genItems.map(withGenActions),
-
-      plans: [
-        { name: 'Starter', price: '$49', features: '1 store\nAI product descriptions\n50 agent actions / day\nEmail support' },
-        { name: 'Growth', price: '$149', features: 'Everything in Starter\nMarketing autopilot\nSupport inbox automation\nUnlimited agent actions' },
-        { name: 'Scale', price: '$349', features: 'Everything in Growth\nMulti-store\nAPI access + custom guardrails\nPriority human escalation' },
-      ].map(p => ({
-        ...p, current: st.plan === p.name,
-        border: st.plan === p.name ? 'var(--color-accent)' : 'var(--color-divider)',
-        bg: st.plan === p.name ? 'color-mix(in srgb, var(--color-accent) 4%, transparent)' : 'transparent',
-        btnClass: st.plan === p.name ? 'btn-secondary' : 'btn-primary',
-        btnLabel: st.plan === p.name ? 'Current plan' : 'Switch to ' + p.name,
-        pick: () => { this.setState({ plan: p.name }); this.toast('Plan set to ' + p.name, 'Saved locally — no Stripe account is connected.'); },
-      })),
-      toastStripe: () => this.toast('Stripe not connected', 'Add Stripe keys to .env to open a real billing portal.'),
 
       panelOpen: st.panelOpen, togglePanel: () => this.setState(s => ({ panelOpen: !s.panelOpen, bellCount: 0 })),
       agentChip: st.feedPaused ? 'Agent paused' : (aiOn ? 'Agent active · ' + (st.ai.model.split('/').pop() || 'live') : 'Agent offline · no API key'),

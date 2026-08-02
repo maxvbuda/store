@@ -1164,7 +1164,7 @@ class Component extends DCLogic {
    * Sends the store owner to the live agent browser with the search already
    * queued, instead of a one-shot MCP API call — the agent actually opens
    * the store and searches it the way a person would, in the browser you
-   * can watch at / , rather than an invisible request/response.
+   * can watch at /console , rather than an invisible request/response.
    */
   searchCatalog() {
     const query = this.state.catalogQuery.trim();
@@ -1172,7 +1172,7 @@ class Component extends DCLogic {
     const store = this.state.onbUrl.trim();
     const goal = (store ? `Go to https://${store} and search` : 'Search')
       + ` the catalog for "${query}". Report what you find — name, price, and a short description for each.`;
-    window.location.href = '/?goal=' + encodeURIComponent(goal) + '&autostart=1';
+    window.location.href = '/console?goal=' + encodeURIComponent(goal) + '&autostart=1';
   }
 
   // -------------------------------------------------------------- support
