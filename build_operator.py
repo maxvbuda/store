@@ -28,6 +28,10 @@ RESOURCE_MAP = {
     "https://unpkg.com/@babel/standalone@7.29.0/babel.min.js": "vendor/babel.min.js",
 }
 
+VIEWPORT = '<div ref="{{ viewportRef }}" style="position: relative; width: 100%; height: 100%; background: #ffffff; border: 1px solid color-mix(in srgb, var(--color-text) 22%, transparent); overflow: hidden;">'
+VIEWPORT_NEW = '<div ref="{{ viewportRef }}" style="position: relative; width: 100%; height: 100%; background: #ffffff; border: 1px solid color-mix(in srgb, var(--color-text) 22%, transparent); border-radius: 14px; overflow: hidden;">'
+MANUAL_BAR = '\n          <sc-if value="{{ manualOpen }}" hint-placeholder-val="{{ false }}">\n            <div style="{{ manualBarStyle }}">\n              <button sc-camel-on-click="{{ manualBack }}" style="{{ manualBtnStyle }}" style-hover="{{ ctrlHoverStyle }}">←</button>\n              <button sc-camel-on-click="{{ manualReload }}" style="{{ manualBtnStyle }}" style-hover="{{ ctrlHoverStyle }}">⟳</button>\n              <input value="{{ manualUrl }}" sc-camel-on-change="{{ setManualUrl }}" sc-camel-on-key-down="{{ onManualUrlKey }}" placeholder="Type a URL and press Enter" style="{{ manualInputStyle }}">\n              <button sc-camel-on-click="{{ manualGo }}" style="{{ manualBtnStyle }}" style-hover="{{ ctrlHoverStyle }}">Go</button>\n              <span style="font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; white-space: nowrap; color: color-mix(in srgb, var(--color-text) 50%, transparent);">{{ manualHint }}</span>\n            </div>\n          </sc-if>'
+
 EXT = {"application/javascript": ".js", "text/javascript": ".js",
        "text/css": ".css", "font/woff2": ".woff2"}
 
@@ -138,6 +142,13 @@ def main() -> None:
         print("warning: digest copy not found:")
         for x in missed:
             print("   -", x)
+
+    # Take-over mode: a nav bar over the live frame (URL / back / reload) —
+    # visible only while the human has the screen. And the browser viewport
+    # gets its curved corners here, since it clips everything inside it.
+    if VIEWPORT not in html:
+        raise SystemExit("viewport div not found — the Operator markup changed")
+    html = html.replace(VIEWPORT, VIEWPORT_NEW + MANUAL_BAR, 1)
 
     OUT.write_text(html)
     print("wrote %s (%d KB), %d assets" % (OUT, len(html) // 1024, len(manifest)))

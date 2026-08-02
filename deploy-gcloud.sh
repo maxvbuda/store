@@ -115,7 +115,11 @@ done
 if [ ! -f .env ]; then echo "no local .env found — run from the repo root"; exit 1; fi
 VMENV=$(mktemp)
 grep -v '^APP_PASSWORD=' .env > "$VMENV"
-PASS=${APP_PASSWORD:-$(openssl rand -hex 8)}
+# Keep the gate password the VM already has — regenerating on every
+# redeploy would silently lock out anyone holding the old one.
+EXISTING=$(gcloud compute ssh "$VM" --zone "$ZONE" --tunnel-through-iap --command \
+  "sudo grep '^APP_PASSWORD=' /opt/store/store/.env 2>/dev/null | cut -d= -f2" 2>/dev/null | tr -d '[:space:]' || true)
+PASS=${APP_PASSWORD:-${EXISTING:-$(openssl rand -hex 8)}}
 echo "APP_PASSWORD=$PASS" >> "$VMENV"
 
 gcloud compute scp --tunnel-through-iap "$VMENV" "$VM":/tmp/store.env --zone "$ZONE"

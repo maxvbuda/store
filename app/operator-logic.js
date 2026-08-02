@@ -58,8 +58,15 @@ class Component extends DCLogic {
       seconds: 0,
       // live data, polled from the server
       run: null, updates: [], browserOk: false, model: '', pageTitle: '', pageUrl: '',
-      goalDraft: '', composerError: ''
+      goalDraft: '', composerError: '',
+      manualUrl: ''
     };
+    // Keystrokes are buffered and flushed as one /type call — per-key requests
+    // arrive out of order on a slow link and typing comes out scrambled.
+    this.typeBuf = '';
+    this.typeTimer = null;
+    this.scrollAcc = 0;
+    this.scrollTimer = null;
     this.tick = 0;
     this.bootedAt = Date.now();
     this.viewportRef = React.createRef();
@@ -84,7 +91,63 @@ class Component extends DCLogic {
     // Real data instead of the scripted demo.
     this.poll();
     this.poller = setInterval(() => this.poll(), 1500);
-    this.framer = setInterval(() => { this.tick++; this.sync(); }, 1200);
+    this.setFrameRate(1200);
+    // Take-over keyboard: window-level so no element needs focus first.
+    this.keyHandler = (e) => this.onManualKey(e);
+    window.addEventListener('keydown', this.keyHandler, true);
+  }
+
+  /** Screenshot refresh cadence — faster while a human is driving. */
+  setFrameRate(ms) {
+    if (this.frameMs === ms) return;
+    this.frameMs = ms;
+    clearInterval(this.framer);
+    this.framer = setInterval(() => { this.tick++; this.sync(); }, ms);
+  }
+
+  /**
+   * Take-over mode: keys go to the agent's browser, not this page.
+   * Printable characters buffer into one /type call (per-key requests arrive
+   * out of order on a slow link); everything else maps to a named key press.
+   */
+  onManualKey(e) {
+    if (!this.state.manual) return;
+    const t = e.target;
+    // The URL bar and the goal composer keep their own keys.
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;   // browser shortcuts stay local
+
+    const NAMED = ['Enter', 'Backspace', 'Tab', 'Escape', 'Delete',
+                   'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+                   'Home', 'End', 'PageUp', 'PageDown'];
+    if (e.key.length === 1) {
+      e.preventDefault();
+      this.typeBuf += e.key;
+      clearTimeout(this.typeTimer);
+      this.typeTimer = setTimeout(() => this.flushType(), 140);
+    } else if (NAMED.includes(e.key)) {
+      e.preventDefault();
+      // Order matters: anything typed must land before the key press —
+      // Enter arriving before the password would submit a half-filled form.
+      this.flushType();
+      this.browserAct('key', { key: e.key });
+    }
+  }
+
+  flushType() {
+    clearTimeout(this.typeTimer);
+    if (!this.typeBuf) return;
+    const text = this.typeBuf;
+    this.typeBuf = '';
+    this.browserAct('type', { text });
+  }
+
+  /** One manual action against the agent's browser, then a fresh frame. */
+  browserAct(action, body) {
+    return fetch('/api/browser/' + action, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    }).then(() => { this.tick++; this.sync(); }).catch(() => {});
   }
 
   /** Pull the real agent run and browser state. */
@@ -134,12 +197,22 @@ class Component extends DCLogic {
     }
   }
 
+  /** Navigate the agent's browser to whatever is in the take-over URL bar. */
+  manualGo() {
+    const url = (this.state.manualUrl || '').trim();
+    if (!url) return;
+    this.flushType();
+    this.browserAct('goto', { url });
+  }
+
   /** Map a click on the scaled frame back to real 1280x800 page coordinates. */
   onFrameClick(ev) {
     const img = this.frameRef.current;
     if (!img) return;
     const r = img.getBoundingClientRect();
     if (!r.width || !r.height) return;
+    // Pending keystrokes belong to the field that had focus BEFORE this click.
+    this.flushType();
     fetch('/api/browser/click', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -155,6 +228,8 @@ class Component extends DCLogic {
     clearInterval(this.poller); clearInterval(this.framer);
     this.clearTimers();
     clearInterval(this.clock);
+    clearTimeout(this.typeTimer); clearTimeout(this.scrollTimer);
+    window.removeEventListener('keydown', this.keyHandler, true);
     if (this.ro) this.ro.disconnect();
   }
 
@@ -185,6 +260,19 @@ class Component extends DCLogic {
         img.__wired = true;
         img.style.cursor = 'crosshair';
         img.addEventListener('click', e => this.onFrameClick(e));
+        // Wheel over the frame scrolls the agent's page, not this one.
+        // Accumulate and flush — one request per wheel tick floods the sidecar.
+        img.addEventListener('wheel', (e) => {
+          if (!this.state.manual) return;
+          e.preventDefault();
+          this.scrollAcc += e.deltaY;
+          clearTimeout(this.scrollTimer);
+          this.scrollTimer = setTimeout(() => {
+            const dy = Math.round(this.scrollAcc);
+            this.scrollAcc = 0;
+            if (dy) this.browserAct('scroll', { dy });
+          }, 120);
+        }, { passive: false });
       }
     }
     // No scripted cursor: the real pointer is inside the screenshot.
@@ -404,6 +492,34 @@ class Component extends DCLogic {
       takeoverHoverStyle: { background: 'var(--color-accent-600)' },
       playLabel: busy ? 'Working' : 'Run goal',
       manualLabel: st.manual ? 'Give back' : 'Take over',
+
+      // ---- take-over mode ------------------------------------------------
+      manualOpen: st.manual,
+      manualUrl: st.manualUrl,
+      setManualUrl: e => this.setState({ manualUrl: e.target.value }),
+      onManualUrlKey: e => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); this.manualGo(); } },
+      manualGo: () => this.manualGo(),
+      manualBack: () => this.browserAct('back', {}),
+      manualReload: () => { if (st.pageUrl) this.browserAct('goto', { url: st.pageUrl }); },
+      manualHint: 'clicks, typing and scrolling go to the page',
+      manualBarStyle: {
+        position: 'absolute', left: 0, top: 0, right: 0, zIndex: 30,
+        display: 'flex', gap: '8px', alignItems: 'center', padding: '9px 12px',
+        background: 'color-mix(in srgb, var(--color-neutral-100) 92%, transparent)',
+        backdropFilter: 'blur(6px)',
+        borderBottom: '1px solid color-mix(in srgb, var(--color-text) 18%, transparent)',
+      },
+      manualInputStyle: {
+        flex: 1, minWidth: 0, font: 'inherit', fontSize: '13.5px', padding: '7px 12px',
+        border: '1px solid color-mix(in srgb, var(--color-text) 26%, transparent)',
+        borderRadius: '5px', background: 'var(--color-neutral-50, #fff)',
+        color: 'var(--color-text)', outline: 'none',
+      },
+      manualBtnStyle: {
+        background: 'transparent', font: 'inherit', fontSize: '13px', cursor: 'pointer',
+        border: '1px solid color-mix(in srgb, var(--color-text) 24%, transparent)',
+        borderRadius: '5px', padding: '6px 12px', color: 'var(--color-text)',
+      },
       // Open the composer. This used to be a window.prompt(), which browsers
       // suppress after the first dialog and which no one could see coming.
       togglePlay: () => {
@@ -411,7 +527,12 @@ class Component extends DCLogic {
         this.setState({ backlog: true, composerError: '' });
       },
       stop: () => { fetch('/api/agent/stop', { method: 'POST' }).then(() => this.poll()).catch(() => {}); },
-      toggleManual: () => this.setState(s => ({ manual: !s.manual })),
+      toggleManual: () => this.setState(s => {
+        const manual = !s.manual;
+        // Faster frames while a human drives; back to easy polling after.
+        this.setFrameRate(manual ? 500 : 1200);
+        return { manual, manualUrl: manual ? (s.pageUrl || '') : s.manualUrl };
+      }),
 
       backlogOpen: st.backlog,
       screenOpen: !st.backlog,
