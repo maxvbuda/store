@@ -5,18 +5,27 @@ The Node server spawns this on demand and proxies /api/browser/* to it. It is
 deliberately dumb: it exposes browser primitives only. The see-think-act loop
 lives in the /browser page, so this process never blocks on a model call.
 
+Architecture: sync Playwright objects are bound to the thread that made them,
+so ONE dedicated worker thread owns every Playwright/CDP call. HTTP handlers
+(ThreadingHTTPServer) never touch the browser — they enqueue an op and wait
+for the worker to run it. Between ops the worker pumps the CDP event loop,
+which is what delivers screencast frames to the /stream live view.
+
 The profile is persistent (BROWSER_PROFILE, default .data/browser-profile), so
 when you log into Shopify once, the session survives restarts.
 
     python3 agent/browser_service.py [--port 8788] [--headless]
 """
 import argparse
+import base64
 import json
 import os
 import pathlib
+import queue
 import sys
 import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # Driver choice matters for bot detection. Patchright is a drop-in Playwright
 # replacement that removes the tells plain Playwright leaves behind (CDP
@@ -55,13 +64,80 @@ PROFILE = pathlib.Path(os.environ.get("BROWSER_PROFILE", ROOT / ".data" / "brows
 START_URL = os.environ.get("BROWSER_START_URL",
                            "http://127.0.0.1:8787/agent-start.html")
 
-lock = threading.Lock()
 # last_launch_error survives teardown() (which nulls page/ctx/pw) so /state
 # can tell "never tried yet, that's fine" apart from "tried and it's broken"
 # — otherwise both look identical (page is None) and the parent never learns
 # a restart won't help until the underlying problem (e.g. Chromium missing)
-# is actually fixed.
-state = {"ctx": None, "page": None, "pw": None, "last_launch_error": None}
+# is actually fixed. Everything in here is touched by the worker thread only.
+state = {"ctx": None, "page": None, "pw": None, "cdp": None,
+         "last_launch_error": None}
+
+# ------------------------------------------------------------ worker queue
+# HTTP handler threads enqueue ops; the worker thread runs them one at a
+# time, so every Playwright call stays on the thread that created the driver.
+
+ops = queue.Queue()
+
+
+class WorkerTimeout(Exception):
+    """The worker did not answer in time — distinct from Playwright's own
+    TimeoutError so the handler can map it to 504 rather than 500."""
+
+
+class _Op:
+    """One unit of Playwright work. The Event flips once result/error is set."""
+    __slots__ = ("fn", "args", "done", "result", "error")
+
+    def __init__(self, fn, args):
+        self.fn, self.args = fn, args
+        self.done = threading.Event()
+        self.result = None
+        self.error = None
+
+
+def call(fn, *args, timeout=90.0):
+    """Run fn(*args) on the worker thread and wait for the answer."""
+    op = _Op(fn, args)
+    ops.put(op)
+    if not op.done.wait(timeout):
+        raise WorkerTimeout("browser worker did not answer within %ds" % int(timeout))
+    if op.error is not None:
+        raise op.error
+    return op.result
+
+
+def worker_loop():
+    """Owns Playwright for the life of the process. Drains the ops queue;
+    when idle, pumps the CDP event loop so screencast frames keep arriving."""
+    while True:
+        try:
+            op = ops.get_nowait()
+        except queue.Empty:
+            if state["page"] is None:
+                # Nothing to pump yet — block cheaply until an op shows up.
+                try:
+                    op = ops.get(timeout=0.05)
+                except queue.Empty:
+                    continue
+            else:
+                try:
+                    state["page"].wait_for_timeout(25)
+                except Exception:
+                    time.sleep(0.05)  # dead page; don't busy-spin on the error
+                continue
+        try:
+            op.result = op.fn(*op.args)
+        except Exception as e:
+            op.error = e
+        finally:
+            op.done.set()
+
+
+# ------------------------------------------------------------- live view
+# The screencast handler (worker thread) writes here; /stream readers (HTTP
+# threads) wait on the condition. Nobody on the read side touches Playwright.
+frame_cond = threading.Condition()
+frame = {"bytes": b"", "seq": 0}  # seq is monotonic across relaunches on purpose
 
 # Runs in the page. Returns the visible interactive controls with their centre
 # coordinates, plus the readable text — enough for a text-only model to decide
@@ -145,10 +221,10 @@ def reap_orphans():
 
 
 def teardown():
-    """Release Chromium AND the Playwright driver. Nulling the handles without
-    calling stop() leaves the driver's event loop registered in this thread, and
-    the next sync_playwright().start() dies with 'Sync API inside the asyncio
-    loop'."""
+    """(worker thread) Release Chromium AND the Playwright driver. Nulling the
+    handles without calling stop() leaves the driver's event loop registered in
+    this thread, and the next sync_playwright().start() dies with 'Sync API
+    inside the asyncio loop'."""
     for key, close in (("ctx", "close"), ("pw", "stop")):
         obj = state.get(key)
         if obj is not None:
@@ -156,11 +232,54 @@ def teardown():
                 getattr(obj, close)()
             except Exception:
                 pass
-    state.update(ctx=None, page=None, pw=None)
+    state.update(ctx=None, page=None, pw=None, cdp=None)
+
+
+def _attach_screencast():
+    """(worker thread) open a CDP session on the current page and start the
+    screencast that feeds /stream.
+
+    The 'Page.screencastFrame' handler runs on the worker thread while it
+    pumps wait_for_timeout, so acking from inside it is thread-safe. Called
+    from ensure(), which also covers re-attachment whenever the page is
+    recreated after a teardown/restart.
+    """
+    try:
+        cdp = state["ctx"].new_cdp_session(state["page"])
+    except Exception as e:
+        print("no CDP session (%s) — /input and /stream degraded" % str(e)[:90], flush=True)
+        state["cdp"] = None
+        return
+    state["cdp"] = cdp  # /input and /wheel work even if the screencast fails
+
+    def on_frame(params):
+        try:
+            data = base64.b64decode(params.get("data") or "")
+        except Exception:
+            data = b""
+        if data:
+            with frame_cond:
+                frame["bytes"] = data
+                frame["seq"] += 1
+                frame_cond.notify_all()
+        # Chromium withholds the next frame until the last one is acked.
+        try:
+            cdp.send("Page.screencastFrameAck", {"sessionId": params["sessionId"]})
+        except Exception:
+            pass
+
+    cdp.on("Page.screencastFrame", on_frame)
+    try:
+        cdp.send("Page.startScreencast", {
+            "format": "jpeg", "quality": 60,
+            "maxWidth": 1280, "maxHeight": 800, "everyNthFrame": 1,
+        })
+    except Exception as e:
+        print("startScreencast failed: %s" % str(e)[:90], flush=True)
 
 
 def ensure(headless: bool):
-    """Start Chromium once; reuse it afterwards."""
+    """(worker thread) Start Chromium once; reuse it afterwards."""
     if state["page"] is not None:
         return state["page"]
     PROFILE.mkdir(parents=True, exist_ok=True)
@@ -211,6 +330,9 @@ def ensure(headless: bool):
             _stealth.apply_stealth_sync(state["page"])
         except Exception:
             pass
+    # Attach the live view before the first navigation so even the start page
+    # load is visible in /stream.
+    _attach_screencast()
     # Always land on the start page. This used to swallow every failure, so a
     # restored tab from a previous session stayed on screen and looked like the
     # browser had a mind of its own.
@@ -253,10 +375,137 @@ def _launch(headless: bool):
     return state["pw"].chromium.launch_persistent_context(**kwargs)
 
 
+# ------------------------------------------------------------- worker ops
+# Everything below the "(worker)" marker runs on the worker thread only.
+
+def _op_state():
+    """(worker) health probe — same JSON as always."""
+    page = state["page"]
+    if page is None:
+        resp = {"running": False, "healthy": False}
+        if state["last_launch_error"]:
+            resp["error"] = state["last_launch_error"]
+        return resp
+    try:
+        # Touch the page: if Chromium died under us, this raises and we
+        # report unhealthy so the parent can restart us.
+        url, title = page.url, page.title()
+    except Exception as e:
+        teardown()
+        return {"running": False, "healthy": False, "error": str(e)[:160]}
+    return {"running": True, "healthy": True, "url": url,
+            "title": title, "profile": str(PROFILE)}
+
+
+def _op_screenshot(headless):
+    return ensure(headless).screenshot(type="png")
+
+
+def _op_elements(headless):
+    # A text description of what's on the page. This is how a text-only
+    # model (DeepSeek) "sees" — no screenshot needed.
+    return ensure(headless).evaluate(ELEMENTS_JS)
+
+
+def _op_prime(headless):
+    """(worker) make sure the browser is up; if the screencast has not painted
+    yet, hand back a one-off jpeg so /stream opens with something visible."""
+    page = ensure(headless)
+    with frame_cond:
+        if frame["seq"]:
+            return None
+    try:
+        return page.screenshot(type="jpeg", quality=60)
+    except Exception:
+        return None
+
+
+def _mouse_event(body):
+    """(worker) translate one /input op into raw CDP mouse events."""
+    cdp = state["cdp"]
+    if cdp is None:
+        raise RuntimeError("no CDP session — browser not started")
+    kind = str(body.get("type") or "")
+    ev = {
+        "x": float(body.get("x", 0)),
+        "y": float(body.get("y", 0)),
+        "button": str(body.get("button") or "left"),
+        "clickCount": int(body.get("clickCount") or 1),
+    }
+    if kind == "move":
+        cdp.send("Input.dispatchMouseEvent", dict(ev, type="mouseMoved"))
+    elif kind == "down":
+        cdp.send("Input.dispatchMouseEvent", dict(ev, type="mousePressed"))
+    elif kind == "up":
+        cdp.send("Input.dispatchMouseEvent", dict(ev, type="mouseReleased"))
+    elif kind == "click":
+        cdp.send("Input.dispatchMouseEvent", dict(ev, type="mousePressed"))
+        cdp.send("Input.dispatchMouseEvent", dict(ev, type="mouseReleased"))
+    else:
+        raise ValueError("input type must be move|down|up|click")
+
+
+def _op_post(headless, path, body):
+    """(worker) the whole POST action table. Returns (status, json_obj)."""
+    page = ensure(headless)
+
+    if path == "/goto":
+        url = str(body.get("url") or "").strip()
+        if not url:
+            return 400, {"error": "url required"}
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        page.goto(url, wait_until="domcontentloaded", timeout=45000)
+
+    elif path == "/click":
+        page.mouse.click(float(body.get("x", 0)), float(body.get("y", 0)))
+
+    elif path == "/type":
+        page.keyboard.type(str(body.get("text", "")), delay=18)
+
+    elif path == "/key":
+        page.keyboard.press(str(body.get("key", "Enter")))
+
+    elif path == "/scroll":
+        page.mouse.wheel(0, float(body.get("dy", 400)))
+
+    elif path == "/back":
+        page.go_back(wait_until="domcontentloaded", timeout=30000)
+
+    elif path == "/shutdown":
+        teardown()
+        return 200, {"ok": True, "running": False}
+
+    elif path == "/input":
+        # Raw pointer events for the live view — no settle, callers stream
+        # these at pointer-move rates and expect an immediate ack.
+        try:
+            _mouse_event(body)
+        except ValueError as e:
+            return 400, {"error": str(e)}
+        return 200, {"ok": True}
+
+    elif path == "/wheel":
+        if state["cdp"] is None:
+            raise RuntimeError("no CDP session — browser not started")
+        state["cdp"].send("Input.dispatchMouseEvent", {
+            "type": "mouseWheel",
+            "x": float(body.get("x", 0)), "y": float(body.get("y", 0)),
+            "deltaX": 0.0, "deltaY": float(body.get("dy", 0)),
+        })
+        return 200, {"ok": True}
+
+    else:
+        return 404, {"error": "unknown endpoint"}
+
+    page.wait_for_timeout(int(body.get("settle", 700)))
+    return 200, {"ok": True, "url": page.url, "title": page.title()}
+
+
 class Handler(BaseHTTPRequestHandler):
-    # HTTP/1.0 on purpose: this server is single-threaded because sync
-    # Playwright objects are bound to the thread that made them. Keep-alive
-    # would let one idle connection block every other request.
+    # HTTP/1.0 on purpose: every response is one-shot with Connection: close,
+    # and the MJPEG /stream ends by connection close anyway. Handler threads
+    # never touch Playwright — they enqueue ops and wait for the worker.
     protocol_version = "HTTP/1.0"
 
     def log_message(self, *a):
@@ -291,108 +540,119 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return {}
 
+    # ------------------------------------------------------------ live view
+
+    def _stream(self):
+        """MJPEG live view, served entirely on this HTTP thread. It only ever
+        reads the frame buffer; the priming screenshot goes through the worker
+        queue like any other op. Each client tracks its own last-seen seq, so
+        any number of parallel streams work."""
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+
+            def part(jpeg):
+                self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n")
+                self.wfile.write(b"Content-Length: %d\r\n\r\n" % len(jpeg))
+                self.wfile.write(jpeg)
+                self.wfile.write(b"\r\n")
+                self.wfile.flush()
+
+            with frame_cond:
+                started = frame["seq"] > 0
+            if not started:
+                # Browser idle or still launching: prime it and show a plain
+                # screenshot so the viewer isn't blank while frames spin up.
+                try:
+                    shot = call(_op_prime, self.server.headless)
+                except Exception:
+                    shot = None
+                with frame_cond:
+                    started = frame["seq"] > 0
+                if shot and not started:
+                    part(shot)
+
+            interval = 1.0 / 15  # contract fps cap
+            next_write = 0.0
+            last_seq = 0
+            while True:
+                with frame_cond:
+                    if frame["seq"] == last_seq:
+                        frame_cond.wait(timeout=2.0)
+                    if frame["seq"] == last_seq:
+                        # Static page, nothing new. Re-send the last frame as
+                        # a keepalive so a vanished client raises BrokenPipe
+                        # here instead of parking this thread forever.
+                        if last_seq == 0:
+                            continue
+                        data = frame["bytes"]
+                    else:
+                        data, last_seq = frame["bytes"], frame["seq"]
+                now = time.monotonic()
+                if now < next_write:
+                    time.sleep(next_write - now)
+                part(data)
+                next_write = time.monotonic() + interval
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass  # client went away — the normal end of a stream
+
     # ----------------------------------------------------------- endpoints
 
     def do_GET(self):
         try:
+            if self.path.startswith("/stream"):
+                return self._stream()
             if self.path.startswith("/screenshot"):
-                with lock:
-                    page = ensure(self.server.headless)
-                    shot = page.screenshot(type="png")
-                return self._png(shot)
+                return self._png(call(_op_screenshot, self.server.headless))
             if self.path.startswith("/elements"):
-                # A text description of what's on the page. This is how a
-                # text-only model (DeepSeek) "sees" — no screenshot needed.
-                with lock:
-                    page = ensure(self.server.headless)
-                    data = page.evaluate(ELEMENTS_JS)
-                return self._json(200, data)
+                return self._json(200, call(_op_elements, self.server.headless))
             if self.path.startswith("/state"):
-                with lock:
-                    page = state["page"]
-                    if page is None:
-                        resp = {"running": False, "healthy": False}
-                        if state["last_launch_error"]:
-                            resp["error"] = state["last_launch_error"]
-                        return self._json(200, resp)
-                    try:
-                        # Touch the page: if Chromium died under us, this raises
-                        # and we report unhealthy so the parent can restart us.
-                        url, title = page.url, page.title()
-                    except Exception as e:
-                        teardown()
-                        return self._json(200, {"running": False, "healthy": False,
-                                                "error": str(e)[:160]})
-                    return self._json(200, {
-                        "running": True, "healthy": True, "url": url,
-                        "title": title, "profile": str(PROFILE),
-                    })
+                return self._json(200, call(_op_state))
             return self._json(404, {"error": "unknown endpoint"})
+        except WorkerTimeout as e:
+            return self._json(504, {"error": str(e)})
         except Exception as e:
             return self._json(500, {"error": str(e)[:300]})
 
     def do_POST(self):
         body = self._body()
+        path = self.path.split("?")[0]
         try:
-            with lock:
-                page = ensure(self.server.headless)
-                path = self.path.split("?")[0]
-
-                if path == "/goto":
-                    url = str(body.get("url") or "").strip()
-                    if not url:
-                        return self._json(400, {"error": "url required"})
-                    if not url.startswith(("http://", "https://")):
-                        url = "https://" + url
-                    page.goto(url, wait_until="domcontentloaded", timeout=45000)
-
-                elif path == "/click":
-                    page.mouse.click(float(body.get("x", 0)), float(body.get("y", 0)))
-
-                elif path == "/type":
-                    page.keyboard.type(str(body.get("text", "")), delay=18)
-
-                elif path == "/key":
-                    page.keyboard.press(str(body.get("key", "Enter")))
-
-                elif path == "/scroll":
-                    page.mouse.wheel(0, float(body.get("dy", 400)))
-
-                elif path == "/back":
-                    page.go_back(wait_until="domcontentloaded", timeout=30000)
-
-                elif path == "/shutdown":
-                    teardown()
-                    return self._json(200, {"ok": True, "running": False})
-
-                else:
-                    return self._json(404, {"error": "unknown endpoint"})
-
-                page.wait_for_timeout(int(body.get("settle", 700)))
-                return self._json(200, {"ok": True, "url": page.url, "title": page.title()})
+            status, obj = call(_op_post, self.server.headless, path, body)
+            return self._json(status, obj)
+        except WorkerTimeout as e:
+            return self._json(504, {"error": str(e)})
         except Exception as e:
             return self._json(500, {"error": str(e)[:300]})
 
 
-def _on_signal(signum, frame):
-    """SIGTERM should close Chromium, not orphan it."""
+def _exit_cleanly():
+    """Teardown must run on the worker thread (sync Playwright objects are
+    thread-bound), so enqueue it and give it a few seconds. If the worker is
+    wedged mid-navigation, reap_orphans() on the next start mops up."""
     try:
-        teardown()
+        op = _Op(teardown, ())
+        ops.put(op)
+        op.done.wait(4)
     finally:
         os._exit(0)
+
+
+def _on_signal(signum, frame_):
+    """SIGTERM should close Chromium, not orphan it."""
+    _exit_cleanly()
 
 
 def watch_parent(ppid: int):
     """Exit if the Node server that spawned us goes away, so we never orphan
     a Chromium holding the profile lock and the port."""
-    import time
     while True:
         time.sleep(2)
         if os.getppid() != ppid:
-            try:
-                teardown()
-            finally:
-                os._exit(0)
+            _exit_cleanly()
 
 
 def main():
@@ -415,9 +675,13 @@ def main():
     if os.getppid() != 1:
         threading.Thread(target=watch_parent, args=(os.getppid(),), daemon=True).start()
 
-    HTTPServer.allow_reuse_address = True
-    srv = HTTPServer(("127.0.0.1", args.port), Handler)
-    srv.headless = args.headless          # single-threaded on purpose: sync Playwright
+    # The one thread allowed to touch Playwright. Launch stays lazy: the
+    # browser starts on the first op that calls ensure().
+    threading.Thread(target=worker_loop, daemon=True, name="playwright-worker").start()
+
+    ThreadingHTTPServer.allow_reuse_address = True
+    srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    srv.headless = args.headless  # ops read this via the handler threads
     print(f"browser service on 127.0.0.1:{args.port}  driver={DRIVER}  profile={PROFILE}", flush=True)
     srv.serve_forever()
 

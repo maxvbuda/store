@@ -67,6 +67,10 @@ class Component extends DCLogic {
     this.typeTimer = null;
     this.scrollAcc = 0;
     this.scrollTimer = null;
+    this.scrollPos = { x: 640, y: 400 };  // wheel lands where the pointer last was
+    this.moveAt = 0;                      // last mousemove sent, for the ~30ms throttle
+    this.streamDown = false;              // stream failed → screenshot polling until a retry works
+    this.streamRetry = null;
     this.tick = 0;
     this.bootedAt = Date.now();
     this.viewportRef = React.createRef();
@@ -97,12 +101,37 @@ class Component extends DCLogic {
     window.addEventListener('keydown', this.keyHandler, true);
   }
 
-  /** Screenshot refresh cadence — faster while a human is driving. */
+  /** Fallback screenshot cadence — faster while a human is driving. */
   setFrameRate(ms) {
     if (this.frameMs === ms) return;
     this.frameMs = ms;
     clearInterval(this.framer);
-    this.framer = setInterval(() => { this.tick++; this.sync(); }, ms);
+    // Only the polling fallback needs a timer; the stream pushes frames itself.
+    this.framer = setInterval(() => { if (this.streamDown) { this.tick++; this.sync(); } }, ms);
+  }
+
+  /**
+   * The live screen: an MJPEG stream in an <img>. src is set ONCE — the
+   * connection stays open and frames replace each other; rewriting src on a
+   * timer would reconnect every tick. On error we drop back to screenshot
+   * polling and retry the stream every ~15s.
+   */
+  startStream() {
+    const img = this.frameRef.current;
+    if (!img) return;
+    clearTimeout(this.streamRetry);
+    this.streamDown = false;
+    img.src = '/api/browser/stream';
+  }
+
+  onStreamError() {
+    const img = this.frameRef.current;
+    // Only a stream failure demotes us — a missed screenshot just re-polls.
+    if (!img || img.src.indexOf('/api/browser/stream') === -1) return;
+    this.streamDown = true;
+    img.src = '/api/browser/screenshot?t=' + this.tick;
+    clearTimeout(this.streamRetry);
+    this.streamRetry = setTimeout(() => this.startStream(), 15000);
   }
 
   /**
@@ -147,7 +176,12 @@ class Component extends DCLogic {
     return fetch('/api/browser/' + action, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body || {}),
-    }).then(() => { this.tick++; this.sync(); }).catch(() => {});
+    }).then(() => this.refreshFrame()).catch(() => {});
+  }
+
+  /** Post-action refresh — only the fallback needs it; streamed frames arrive on their own. */
+  refreshFrame() {
+    if (this.streamDown) { this.tick++; this.sync(); }
   }
 
   /** Pull the real agent run and browser state. */
@@ -205,21 +239,57 @@ class Component extends DCLogic {
     this.browserAct('goto', { url });
   }
 
-  /** Map a click on the scaled frame back to real 1280x800 page coordinates. */
-  onFrameClick(ev) {
+  /** Map a pointer event on the scaled frame back to real 1280x800 page coordinates. */
+  mapEvent(ev) {
     const img = this.frameRef.current;
-    if (!img) return;
+    if (!img) return null;
     const r = img.getBoundingClientRect();
-    if (!r.width || !r.height) return;
+    if (!r.width || !r.height) return null;
+    return {
+      x: Math.round((ev.clientX - r.left) * (1280 / r.width)),
+      y: Math.round((ev.clientY - r.top) * (800 / r.height)),
+    };
+  }
+
+  /** Take-over pointer: real moves make hovers, drags and text selection work. */
+  onFrameMove(e) {
+    if (!this.state.manual) return;
+    const now = Date.now();
+    if (now - this.moveAt < 30) return;   // ~30ms throttle
+    const p = this.mapEvent(e);
+    if (!p) return;
+    this.moveAt = now;
+    this.browserAct('input', { type: 'move', x: p.x, y: p.y });
+  }
+
+  onFrameDown(e) {
+    if (!this.state.manual) return;
+    e.preventDefault();   // no native image drag — the press belongs to the page
+    const p = this.mapEvent(e);
+    if (!p) return;
+    // Pending keystrokes belong to the field that had focus BEFORE this press.
+    this.flushType();
+    this.browserAct('input', { type: 'down', x: p.x, y: p.y });
+  }
+
+  onFrameUp(e) {
+    if (!this.state.manual) return;
+    const p = this.mapEvent(e);
+    if (!p) return;
+    this.browserAct('input', { type: 'up', x: p.x, y: p.y });
+  }
+
+  /** Non-manual clicks only — in take-over mode down+up already covered it. */
+  onFrameClick(ev) {
+    if (this.state.manual) return;
+    const p = this.mapEvent(ev);
+    if (!p) return;
     // Pending keystrokes belong to the field that had focus BEFORE this click.
     this.flushType();
     fetch('/api/browser/click', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        x: Math.round((ev.clientX - r.left) * (1280 / r.width)),
-        y: Math.round((ev.clientY - r.top) * (800 / r.height)),
-      }),
-    }).then(() => { this.tick++; this.sync(); }).catch(() => {});
+      body: JSON.stringify(p),
+    }).then(() => this.refreshFrame()).catch(() => {});
   }
 
   componentDidUpdate() { this.measure(); this.sync(); }
@@ -229,6 +299,7 @@ class Component extends DCLogic {
     this.clearTimers();
     clearInterval(this.clock);
     clearTimeout(this.typeTimer); clearTimeout(this.scrollTimer);
+    clearTimeout(this.streamRetry);
     window.removeEventListener('keydown', this.keyHandler, true);
     if (this.ro) this.ro.disconnect();
   }
@@ -252,28 +323,37 @@ class Component extends DCLogic {
   sync() {
     const s = this.scale;
     if (this.stageRef.current) this.stageRef.current.style.transform = 'scale(' + s + ')';
-    // The live screen is the agent's real Chromium, refetched on a timer.
+    // The live screen is the agent's real Chromium — an MJPEG stream, with
+    // screenshot polling only while the stream is down.
     const img = this.frameRef.current;
     if (img) {
-      img.src = '/api/browser/screenshot?t=' + this.tick;
       if (!img.__wired) {
         img.__wired = true;
         img.style.cursor = 'crosshair';
         img.addEventListener('click', e => this.onFrameClick(e));
+        img.addEventListener('mousemove', e => this.onFrameMove(e));
+        img.addEventListener('mousedown', e => this.onFrameDown(e));
+        img.addEventListener('mouseup', e => this.onFrameUp(e));
+        img.addEventListener('error', () => this.onStreamError());
         // Wheel over the frame scrolls the agent's page, not this one.
         // Accumulate and flush — one request per wheel tick floods the sidecar.
         img.addEventListener('wheel', (e) => {
           if (!this.state.manual) return;
           e.preventDefault();
           this.scrollAcc += e.deltaY;
+          const p = this.mapEvent(e);
+          if (p) this.scrollPos = p;
           clearTimeout(this.scrollTimer);
           this.scrollTimer = setTimeout(() => {
             const dy = Math.round(this.scrollAcc);
             this.scrollAcc = 0;
-            if (dy) this.browserAct('scroll', { dy });
+            if (dy) this.browserAct('wheel', { x: this.scrollPos.x, y: this.scrollPos.y, dy });
           }, 120);
         }, { passive: false });
+        this.startStream();
       }
+      // Fallback only — while streaming, touching src would reconnect.
+      if (this.streamDown) img.src = '/api/browser/screenshot?t=' + this.tick;
     }
     // No scripted cursor: the real pointer is inside the screenshot.
     if (this.cursorRef.current) this.cursorRef.current.style.opacity = '0';
