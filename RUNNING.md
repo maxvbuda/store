@@ -4,7 +4,17 @@
 node server.js          # http://localhost:8787
 ```
 
-Node 18+ only. No `npm install` — there are no dependencies.
+Node 18+ only. No `npm install` — the server has no dependencies.
+
+**For the agent browser** (the computer-use console at `/`) you also need Python:
+
+```bash
+python3 -m pip install -r requirements.txt
+python3 -m playwright install chromium     # the browser binary; pip won't fetch it
+```
+
+Everything else — accounts, the store app at `/app`, the OpenRouter proxy —
+works without those.
 
 ## Giving it your OpenRouter key
 

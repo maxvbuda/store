@@ -1,0 +1,32 @@
+# Python dependencies for the agent browser (agent/browser_service.py).
+#
+#   python3 -m pip install -r requirements.txt
+#   python3 -m playwright install chromium      # <- REQUIRED, see below
+#
+# The Node server itself has no dependencies. These are only needed for the
+# computer-use browser at /  — everything else (accounts, the store app, the
+# OpenRouter proxy) runs without them.
+
+# Browser automation. The sidecar drives Chromium through this.
+playwright==1.61.0
+
+# Anti-detection patches, applied to every page. This is the same mechanism
+# Crawl4AI's StealthAdapter uses. Without it the browser advertises itself as
+# automated (navigator.webdriver etc.) and trips Cloudflare more readily.
+playwright-stealth==2.0.3
+
+# Optional, opt-in via BROWSER_DRIVER=patchright. A drop-in Playwright
+# replacement with stronger anti-detection. Its Chromium self-exited a few
+# seconds after launch during testing on macOS/arm64, so it is NOT the default.
+patchright==1.61.2
+
+# --------------------------------------------------------------------------
+# The browser binary is NOT a pip package and pip will not fetch it. After
+# installing the above you MUST run:
+#
+#     python3 -m playwright install chromium
+#
+# If it goes missing later the console reports it directly. The symptom is a
+# 500 from /api/browser/*; the underlying error is
+# "Executable doesn't exist at .../Google Chrome for Testing.app".
+# --------------------------------------------------------------------------
