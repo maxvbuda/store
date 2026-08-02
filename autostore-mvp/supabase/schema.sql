@@ -156,10 +156,10 @@ create policy "product_images_auth_write" on storage.objects for insert with che
 
 drop policy if exists "product_images_owner_update" on storage.objects;
 create policy "product_images_owner_update" on storage.objects for update using (
-  bucket_id = 'product-images' and auth.uid()::text = owner
+  bucket_id = 'product-images' and auth.uid() = owner::uuid
 );
 
 drop policy if exists "product_images_owner_delete" on storage.objects;
 create policy "product_images_owner_delete" on storage.objects for delete using (
-  bucket_id = 'product-images' and auth.uid()::text = owner
+  bucket_id = 'product-images' and auth.uid() = owner::uuid
 );
