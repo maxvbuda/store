@@ -4,8 +4,10 @@ services:
     runtime: node
     plan: free
     # Installs the Node deps, then the Python side (agent browser + Playwright's
-    # Chromium) needed by the computer-use console at /.
-    buildCommand: "npm install && pip install -r requirements.txt && python3 -m playwright install --with-deps chromium"
+    # Chromium) needed by the computer-use console at /. No --with-deps: that
+    # flag shells out to apt-get as root, which Render's build sandbox
+    # refuses non-interactively ("su: Authentication failure").
+    buildCommand: "npm install && pip install -r requirements.txt && python3 -m playwright install chromium"
     startCommand: node server.js
     envVars:
       # Set the value in the Render dashboard — never commit the key.
