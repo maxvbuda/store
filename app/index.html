@@ -422,6 +422,10 @@ a{color:var(--color-accent)}a:hover{color:var(--color-accent-600)}
         <div class="field" style="flex:1"><label>Shopify store URL</label><input class="input" value="{{ onbUrl }}" sc-camel-on-change="{{ setOnbUrl }}" placeholder="your-store.myshopify.com"></div>
         <button class="btn btn-primary" sc-camel-on-click="{{ connectStore }}" disabled="{{ onbConnected }}">{{ connectLabel }}</button>
       </div>
+      <div class="field" style="max-width:270px;margin-top:12px">
+        <label>Store password (if password-protected)</label>
+        <input class="input" type="password" value="{{ onbStorePassword }}" sc-camel-on-change="{{ setOnbStorePassword }}" placeholder="Leave blank if your store is live">
+      </div>
       <sc-if value="{{ onbConnected }}" hint-placeholder-val="{{ false }}">
       <div style="margin-top:20px;border-top:2px solid var(--color-accent);background:var(--color-surface);padding:16px;max-width:560px">
         <div style="display:flex;gap:8px;align-items:center;font-weight:800;font-family:var(--font-heading);font-size:14px"><svg width="16" height="16" sc-camel-view-box="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="2.5"><path d="M20 6 9 17l-5-5"></path></svg>{{ connectedLine }}</div>
@@ -499,7 +503,7 @@ a{color:var(--color-accent)}a:hover{color:var(--color-accent-600)}
       <sc-if value="{{ onbCanBack }}" hint-placeholder-val="{{ false }}"><button class="btn btn-secondary" sc-camel-on-click="{{ onbBack }}">Back</button></sc-if>
       <sc-if value="{{ onbNotLast }}" hint-placeholder-val="{{ true }}"><button class="btn btn-primary" sc-camel-on-click="{{ onbNext }}" disabled="{{ onbNextDisabled }}">Continue<svg width="15" height="15" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg></button></sc-if>
       <sc-if value="{{ onb4 }}" hint-placeholder-val="{{ false }}"><button class="btn btn-primary" sc-camel-on-click="{{ launchAgent }}">Launch agent<svg width="15" height="15" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg></button></sc-if>
-      <a style="cursor:pointer;margin-left:auto;font-size:13px;align-self:center" sc-camel-on-click="{{ signIn }}">{{ skipLabel }}</a>
+      <a style="cursor:pointer;margin-left:auto;font-size:13px;align-self:center" sc-camel-on-click="{{ launchAgent }}">{{ skipLabel }}</a>
     </div>
   </div>
 </div>
@@ -525,8 +529,13 @@ a{color:var(--color-accent)}a:hover{color:var(--color-accent-600)}
       <a style="cursor:pointer;display:flex;gap:10px;align-items:baseline;padding:9px 20px;text-decoration:none;font-family:var(--font-heading);font-weight:800;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:{{ n.color }};background:{{ n.bg }}" sc-camel-on-click="{{ n.go }}"><span style="font-size:10px;font-variant-numeric:tabular-nums;opacity:.5">{{ n.num }}</span>{{ n.label }}<sc-if value="{{ n.badge }}" hint-placeholder-val="{{ false }}"><span style="margin-left:auto;background:var(--color-accent);color:var(--color-bg);font-size:9px;min-width:15px;height:15px;display:grid;place-items:center;padding:0 3px;font-variant-numeric:tabular-nums">{{ n.badge }}</span></sc-if></a>
       </sc-for>
       <div style="margin-top:auto;padding:16px 20px;border-top:2px solid var(--color-divider)">
-        <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">Growth plan</div>
-        <div class="text-muted" style="font-size:12px;margin-top:2px">Unlimited actions</div>
+        <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">{{ planName }} plan</div>
+        <div class="text-muted" style="font-size:12px;margin-top:2px">${{ planPrice }}/mo</div>
+        <div style="display:flex;gap:6px;margin-top:10px">
+          <sc-for list="{{ planOptions }}" as="p" hint-placeholder-count="3">
+          <a style="cursor:pointer;flex:1;text-align:center;padding:5px 0;font-size:10px;font-weight:800;font-family:var(--font-heading);letter-spacing:.02em;text-transform:uppercase;border:2px solid {{ p.border }};color:{{ p.color }}" sc-camel-on-click="{{ p.pick }}">{{ p.name }}</a>
+          </sc-for>
+        </div>
       </div>
     </div>
 
@@ -583,6 +592,10 @@ a{color:var(--color-accent)}a:hover{color:var(--color-accent-600)}
         <div style="display:flex;align-items:flex-end;justify-content:space-between">
           <div><div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-accent)">Catalog</div><h2 style="margin:6px 0 0">Products</h2></div>
           <button class="btn btn-primary" sc-camel-on-click="{{ genAllDesc }}">Generate all missing copy<svg width="15" height="15" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg></button>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:16px;max-width:480px">
+          <input class="input" value="{{ catalogQuery }}" sc-camel-on-change="{{ setCatalogQuery }}" placeholder="Search your connected Shopify store's catalog…">
+          <button class="btn btn-secondary" sc-camel-on-click="{{ searchCatalog }}" disabled="{{ catalogSyncBusy }}">{{ catalogSyncLabel }}</button>
         </div>
         <hr class="hr">
         <sc-raw-table class="table">
@@ -786,9 +799,10 @@ class Component extends DCLogic {
       genItems: [],
       user: null, loginEmail: '', loginPassword: '', authBusy: false,
       selTicket: null, reqText: '', mkTopic: '', mkType: 'Instagram post', mkBusy: false,
-      onbUrl: '', onbConnected: false, rewrite: 'now',
+      catalogQuery: '', catalogSyncBusy: false,
+      onbUrl: '', onbStorePassword: '', onbConnected: false, rewrite: 'now',
       autoLevel: 'Approve first', voice: 'Warm', refundCap: '50', discountCap: '20',
-      uploads: {}, plan: 'Growth',
+      uploads: {}, plan: 'pro',
       isSubscribed: false, isFreeTrial: true, freeTrialDays: 14, subscriptionStatus: 'trial',
       trialStartDate: null,
     };
@@ -1145,6 +1159,49 @@ class Component extends DCLogic {
     for (const sku of todo) await this.genDesc(sku);   // sequential — avoids rate limits
   }
 
+  /**
+   * Real call to the connected store's Shopify UCP MCP server — the
+   * catalog-search tool, per shopify.dev/docs/apps/build/storefront-mcp:
+   * POST .../api/ucp/mcp, method "tools/call", tool "search_catalog",
+   * arguments wrapped in { meta: { ucp-agent }, catalog: { query } }.
+   */
+  async searchCatalog() {
+    const query = this.state.catalogQuery.trim();
+    if (!query) { this.toast('Type a search', 'e.g. "wireless earbuds" or a product name'); return; }
+    this.setState({ catalogSyncBusy: true });
+    try {
+      const r = await this.api('/api/shopify-mcp', {
+        endpoint: 'ucp',
+        payload: {
+          jsonrpc: '2.0', method: 'tools/call', id: Date.now(),
+          params: {
+            name: 'search_catalog',
+            arguments: {
+              meta: { 'ucp-agent': { profile: 'https://shopify.dev/ucp/agent-profiles/examples/2026-04-08/valid-with-capabilities.json' } },
+              catalog: { query },
+            },
+          },
+        },
+      });
+      const result = (r.data && r.data.result) || {};
+      // Shopify's MCP responses carry both a spec-compliant "content" text
+      // block (for the model) and a "structuredContent" object with the
+      // real parsed payload — read products from there, not the wrapper.
+      let products = result.structuredContent && result.structuredContent.products;
+      if (!products) {
+        try { products = JSON.parse((result.content || [])[0].text).products; } catch (e) { /* leave undefined */ }
+      }
+      const count = Array.isArray(products) ? products.length : 0;
+      this.toast('Catalog search done', count ? (count + ' result' + (count === 1 ? '' : 's') + ' for "' + query + '"') : ('No results for "' + query + '"'));
+      this.pushFeed('agent', 'Searched Shopify catalog for "' + query + '" via MCP — ' + count + ' result(s)');
+    } catch (e) {
+      this.toast('Catalog search failed', String(e.message || e).slice(0, 160));
+      this.pushFeed('agent', 'Catalog search failed — ' + String(e.message || e).slice(0, 100));
+    } finally {
+      this.setState({ catalogSyncBusy: false });
+    }
+  }
+
   // -------------------------------------------------------------- support
 
   ticketView(tk) {
@@ -1321,7 +1378,7 @@ class Component extends DCLogic {
     if (st.user) {
       try {
         const r = await this.api('/api/account/setup', {
-          storeUrl: st.onbUrl, voice: st.voice, autoLevel: st.autoLevel,
+          storeUrl: st.onbUrl, storePassword: st.onbStorePassword, voice: st.voice, autoLevel: st.autoLevel,
           refundCap: st.refundCap, discountCap: st.discountCap,
         });
         this.setState({ user: r.user });
@@ -1371,8 +1428,23 @@ class Component extends DCLogic {
     const voiceSamples = { Plain: 'Your order shipped. Tracking: 9400 1102.', Warm: 'Good news — your order\'s on its way. Track it here.', Bold: 'It\'s out the door. Watch the mail like a hawk.' };
     const missingPhotos = st.products.filter(p => !p.desc).map(p => p.sku);
 
+    const PLANS = [
+      { id: 'starter', name: 'Starter', price: 15 },
+      { id: 'pro', name: 'Pro', price: 28 },
+      { id: 'max', name: 'Max', price: 56 },
+    ];
+    const currentPlan = PLANS.find(p => p.id === st.plan) || PLANS[1];
+
     return {
       storeName, storeInit: storeName.split(/[\s&]+/).filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase(),
+      planName: currentPlan.name, planPrice: currentPlan.price,
+      planOptions: PLANS.map(p => ({
+        id: p.id, name: p.name, price: p.price,
+        active: p.id === currentPlan.id,
+        border: p.id === currentPlan.id ? 'var(--color-accent)' : 'var(--color-divider)',
+        color: p.id === currentPlan.id ? 'var(--color-accent)' : 'var(--color-neutral-600)',
+        pick: () => this.setState({ plan: p.id }),
+      })),
       isLogin: screen === 'login', isOnboarding: screen === 'onboarding', isApp,
       scDashboard: screen === 'dashboard', scProducts: screen === 'products', scOrders: screen === 'orders',
       scMarketing: screen === 'marketing', scSupport: screen === 'support', scRequests: screen === 'requests', scBilling: screen === 'billing',
@@ -1449,6 +1521,10 @@ class Component extends DCLogic {
         };
       }),
       genAllDesc: () => this.genAllDesc(),
+      catalogQuery: st.catalogQuery, setCatalogQuery: e => this.setState({ catalogQuery: e.target.value }),
+      catalogSyncBusy: st.catalogSyncBusy,
+      catalogSyncLabel: st.catalogSyncBusy ? 'Searching…' : 'Search Shopify catalog',
+      searchCatalog: () => this.searchCatalog(),
 
       tickets: st.tickets.map(t => this.ticketView(t)),
       ticketOpen: !!selV,
@@ -1503,6 +1579,7 @@ class Component extends DCLogic {
       onbNext: () => this.setState(s => ({ onbStep: s.onbStep + 1 })),
       onbNextDisabled: st.onbStep === 1 && !st.onbConnected,
       onbUrl: st.onbUrl, setOnbUrl: e => this.setState({ onbUrl: e.target.value }),
+      onbStorePassword: st.onbStorePassword, setOnbStorePassword: e => this.setState({ onbStorePassword: e.target.value }),
       onbConnected: st.onbConnected, connectLabel: st.onbConnected ? 'Connected' : 'Connect',
       connectStore: () => this.connectStore(),
 

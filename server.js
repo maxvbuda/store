@@ -250,6 +250,80 @@ async function handleLLM(req, res) {
   }
 }
 
+// ------------------------------------------------------- Shopify MCP
+
+const SHOPIFY_MCP_PATHS = ['/api/mcp', '/api/ucp/mcp'];
+
+function normalizeStoreDomain(raw) {
+  raw = String(raw || '').trim();
+  if (!raw) return '';
+  if (!/^https?:\/\//i.test(raw)) raw = 'https://' + raw;
+  try { return new URL(raw).host; } catch (e) { return ''; }
+}
+
+/**
+ * Storefront password protection is bypassed the way Shopify itself
+ * documents it: HTTP Basic auth with the fixed username "shopify" and the
+ * store's storefront password. Domain + password come from the signed-in
+ * user's own account (set during onboarding) — every user talks to their
+ * own store, never a shared one. This call is server-side only, so the
+ * password never reaches the browser.
+ */
+async function shopifyMcpRequest(path, payload, domain, password) {
+  const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
+  if (password) headers.Authorization = 'Basic ' + Buffer.from('shopify:' + password).toString('base64');
+
+  const r = await fetch('https://' + domain + path, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload || {}),
+    // Manual redirect handling: Shopify's password gate responds to a
+    // locked-out request with a redirect to the login page. Following it
+    // would silently hand back an HTML login form instead of the MCP
+    // response, so treat any 3xx here as "still gated" and surface that.
+    redirect: 'manual',
+    signal: AbortSignal.timeout(20000),
+  });
+
+  if (r.status >= 300 && r.status < 400) {
+    throw new Error(path + ' redirected — still behind the password gate. Check the store password in Settings.');
+  }
+  return r;
+}
+
+/** Loops the MCP request across /api/mcp and /api/ucp/mcp for the caller's own connected store. */
+async function handleShopifyMcp(req, res) {
+  const user = auth.currentUser(req);
+  if (!user) return send(res, 401, { error: 'Sign in first.' });
+
+  let body;
+  try { body = await readBody(req); } catch (e) { return send(res, 400, { error: String(e.message) }); }
+
+  const setup = user.setup || {};
+  const domain = normalizeStoreDomain(setup.storeUrl);
+  if (!domain) return send(res, 400, { error: 'No Shopify store connected yet — add your store URL during onboarding.' });
+  const password = setup.storePassword || '';
+
+  const payload = body.payload !== undefined ? body.payload : body;
+  const paths = body.endpoint === 'mcp' ? ['/api/mcp']
+    : body.endpoint === 'ucp' ? ['/api/ucp/mcp']
+    : SHOPIFY_MCP_PATHS;
+
+  let lastError;
+  for (const path of paths) {
+    try {
+      const r = await shopifyMcpRequest(path, payload, domain, password);
+      if (r.status === 404) { lastError = new Error(path + ' returned 404'); continue; }
+      const data = await r.json().catch(() => null);
+      if (!r.ok) { lastError = new Error((data && data.error) || ('HTTP ' + r.status + ' from ' + path)); continue; }
+      return send(res, 200, { ok: true, endpoint: path, data });
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  send(res, 502, { ok: false, error: String((lastError && lastError.message) || lastError || 'Shopify MCP request failed') });
+}
+
 /** Real reachability check for the storefront URL typed during onboarding. */
 async function handleCheckStore(req, res) {
   let body;
@@ -333,6 +407,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/models') return handleModels(res);
     if (url.pathname === '/api/llm' && req.method === 'POST') return handleLLM(req, res);
     if (url.pathname === '/api/check-store' && req.method === 'POST') return handleCheckStore(req, res);
+    if (url.pathname === '/api/shopify-mcp' && req.method === 'POST') return handleShopifyMcp(req, res);
     if (url.pathname.startsWith('/api/')) return send(res, 404, { error: 'unknown endpoint' });
     serveStatic(req, res, url.pathname);
   } catch (e) {

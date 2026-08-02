@@ -18,9 +18,10 @@ class Component extends DCLogic {
       genItems: [],
       user: null, loginEmail: '', loginPassword: '', authBusy: false,
       selTicket: null, reqText: '', mkTopic: '', mkType: 'Instagram post', mkBusy: false,
-      onbUrl: '', onbConnected: false, rewrite: 'now',
+      catalogQuery: '', catalogSyncBusy: false,
+      onbUrl: '', onbStorePassword: '', onbConnected: false, rewrite: 'now',
       autoLevel: 'Approve first', voice: 'Warm', refundCap: '50', discountCap: '20',
-      uploads: {}, plan: 'Growth',
+      uploads: {}, plan: 'pro',
     };
 
     this.state = Object.assign(base, this.loadSaved());
@@ -311,6 +312,49 @@ class Component extends DCLogic {
     for (const sku of todo) await this.genDesc(sku);   // sequential — avoids rate limits
   }
 
+  /**
+   * Real call to the connected store's Shopify UCP MCP server — the
+   * catalog-search tool, per shopify.dev/docs/apps/build/storefront-mcp:
+   * POST .../api/ucp/mcp, method "tools/call", tool "search_catalog",
+   * arguments wrapped in { meta: { ucp-agent }, catalog: { query } }.
+   */
+  async searchCatalog() {
+    const query = this.state.catalogQuery.trim();
+    if (!query) { this.toast('Type a search', 'e.g. "wireless earbuds" or a product name'); return; }
+    this.setState({ catalogSyncBusy: true });
+    try {
+      const r = await this.api('/api/shopify-mcp', {
+        endpoint: 'ucp',
+        payload: {
+          jsonrpc: '2.0', method: 'tools/call', id: Date.now(),
+          params: {
+            name: 'search_catalog',
+            arguments: {
+              meta: { 'ucp-agent': { profile: 'https://shopify.dev/ucp/agent-profiles/examples/2026-04-08/valid-with-capabilities.json' } },
+              catalog: { query },
+            },
+          },
+        },
+      });
+      const result = (r.data && r.data.result) || {};
+      // Shopify's MCP responses carry both a spec-compliant "content" text
+      // block (for the model) and a "structuredContent" object with the
+      // real parsed payload — read products from there, not the wrapper.
+      let products = result.structuredContent && result.structuredContent.products;
+      if (!products) {
+        try { products = JSON.parse((result.content || [])[0].text).products; } catch (e) { /* leave undefined */ }
+      }
+      const count = Array.isArray(products) ? products.length : 0;
+      this.toast('Catalog search done', count ? (count + ' result' + (count === 1 ? '' : 's') + ' for "' + query + '"') : ('No results for "' + query + '"'));
+      this.pushFeed('agent', 'Searched Shopify catalog for "' + query + '" via MCP — ' + count + ' result(s)');
+    } catch (e) {
+      this.toast('Catalog search failed', String(e.message || e).slice(0, 160));
+      this.pushFeed('agent', 'Catalog search failed — ' + String(e.message || e).slice(0, 100));
+    } finally {
+      this.setState({ catalogSyncBusy: false });
+    }
+  }
+
   // -------------------------------------------------------------- support
 
   ticketView(tk) {
@@ -487,7 +531,7 @@ class Component extends DCLogic {
     if (st.user) {
       try {
         const r = await this.api('/api/account/setup', {
-          storeUrl: st.onbUrl, voice: st.voice, autoLevel: st.autoLevel,
+          storeUrl: st.onbUrl, storePassword: st.onbStorePassword, voice: st.voice, autoLevel: st.autoLevel,
           refundCap: st.refundCap, discountCap: st.discountCap,
         });
         this.setState({ user: r.user });
@@ -537,8 +581,23 @@ class Component extends DCLogic {
     const voiceSamples = { Plain: 'Your order shipped. Tracking: 9400 1102.', Warm: 'Good news — your order\'s on its way. Track it here.', Bold: 'It\'s out the door. Watch the mail like a hawk.' };
     const missingPhotos = st.products.filter(p => !p.desc).map(p => p.sku);
 
+    const PLANS = [
+      { id: 'starter', name: 'Starter', price: 15 },
+      { id: 'pro', name: 'Pro', price: 28 },
+      { id: 'max', name: 'Max', price: 56 },
+    ];
+    const currentPlan = PLANS.find(p => p.id === st.plan) || PLANS[1];
+
     return {
       storeName, storeInit: storeName.split(/[\s&]+/).filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase(),
+      planName: currentPlan.name, planPrice: currentPlan.price,
+      planOptions: PLANS.map(p => ({
+        id: p.id, name: p.name, price: p.price,
+        active: p.id === currentPlan.id,
+        border: p.id === currentPlan.id ? 'var(--color-accent)' : 'var(--color-divider)',
+        color: p.id === currentPlan.id ? 'var(--color-accent)' : 'var(--color-neutral-600)',
+        pick: () => this.setState({ plan: p.id }),
+      })),
       isLogin: screen === 'login', isOnboarding: screen === 'onboarding', isApp,
       scDashboard: screen === 'dashboard', scProducts: screen === 'products', scOrders: screen === 'orders',
       scMarketing: screen === 'marketing', scSupport: screen === 'support', scRequests: screen === 'requests', scBilling: screen === 'billing',
@@ -615,6 +674,10 @@ class Component extends DCLogic {
         };
       }),
       genAllDesc: () => this.genAllDesc(),
+      catalogQuery: st.catalogQuery, setCatalogQuery: e => this.setState({ catalogQuery: e.target.value }),
+      catalogSyncBusy: st.catalogSyncBusy,
+      catalogSyncLabel: st.catalogSyncBusy ? 'Searching…' : 'Search Shopify catalog',
+      searchCatalog: () => this.searchCatalog(),
 
       tickets: st.tickets.map(t => this.ticketView(t)),
       ticketOpen: !!selV,
@@ -683,6 +746,7 @@ class Component extends DCLogic {
       onbNext: () => this.setState(s => ({ onbStep: s.onbStep + 1 })),
       onbNextDisabled: st.onbStep === 1 && !st.onbConnected,
       onbUrl: st.onbUrl, setOnbUrl: e => this.setState({ onbUrl: e.target.value }),
+      onbStorePassword: st.onbStorePassword, setOnbStorePassword: e => this.setState({ onbStorePassword: e.target.value }),
       onbConnected: st.onbConnected, connectLabel: st.onbConnected ? 'Connected' : 'Connect',
       connectStore: () => this.connectStore(),
 
