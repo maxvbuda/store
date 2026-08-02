@@ -18,7 +18,7 @@ class Component extends DCLogic {
       genItems: [],
       user: null, loginEmail: '', loginPassword: '', authBusy: false,
       selTicket: null, reqText: '', mkTopic: '', mkType: 'Instagram post', mkBusy: false,
-      catalogQuery: '', catalogSyncBusy: false,
+      catalogQuery: '',
       onbUrl: '', onbStorePassword: '', onbConnected: false, rewrite: 'now',
       autoLevel: 'Approve first', voice: 'Warm', refundCap: '50', discountCap: '20',
       uploads: {}, plan: 'pro',
@@ -313,46 +313,18 @@ class Component extends DCLogic {
   }
 
   /**
-   * Real call to the connected store's Shopify UCP MCP server — the
-   * catalog-search tool, per shopify.dev/docs/apps/build/storefront-mcp:
-   * POST .../api/ucp/mcp, method "tools/call", tool "search_catalog",
-   * arguments wrapped in { meta: { ucp-agent }, catalog: { query } }.
+   * Sends the store owner to the live agent browser with the search already
+   * queued, instead of a one-shot MCP API call — the agent actually opens
+   * the store and searches it the way a person would, in the browser you
+   * can watch at / , rather than an invisible request/response.
    */
-  async searchCatalog() {
+  searchCatalog() {
     const query = this.state.catalogQuery.trim();
     if (!query) { this.toast('Type a search', 'e.g. "wireless earbuds" or a product name'); return; }
-    this.setState({ catalogSyncBusy: true });
-    try {
-      const r = await this.api('/api/shopify-mcp', {
-        endpoint: 'ucp',
-        payload: {
-          jsonrpc: '2.0', method: 'tools/call', id: Date.now(),
-          params: {
-            name: 'search_catalog',
-            arguments: {
-              meta: { 'ucp-agent': { profile: 'https://shopify.dev/ucp/agent-profiles/examples/2026-04-08/valid-with-capabilities.json' } },
-              catalog: { query },
-            },
-          },
-        },
-      });
-      const result = (r.data && r.data.result) || {};
-      // Shopify's MCP responses carry both a spec-compliant "content" text
-      // block (for the model) and a "structuredContent" object with the
-      // real parsed payload — read products from there, not the wrapper.
-      let products = result.structuredContent && result.structuredContent.products;
-      if (!products) {
-        try { products = JSON.parse((result.content || [])[0].text).products; } catch (e) { /* leave undefined */ }
-      }
-      const count = Array.isArray(products) ? products.length : 0;
-      this.toast('Catalog search done', count ? (count + ' result' + (count === 1 ? '' : 's') + ' for "' + query + '"') : ('No results for "' + query + '"'));
-      this.pushFeed('agent', 'Searched Shopify catalog for "' + query + '" via MCP — ' + count + ' result(s)');
-    } catch (e) {
-      this.toast('Catalog search failed', String(e.message || e).slice(0, 160));
-      this.pushFeed('agent', 'Catalog search failed — ' + String(e.message || e).slice(0, 100));
-    } finally {
-      this.setState({ catalogSyncBusy: false });
-    }
+    const store = this.state.onbUrl.trim();
+    const goal = (store ? `Go to https://${store} and search` : 'Search')
+      + ` the catalog for "${query}". Report what you find — name, price, and a short description for each.`;
+    window.location.href = '/?goal=' + encodeURIComponent(goal) + '&autostart=1';
   }
 
   // -------------------------------------------------------------- support
@@ -679,8 +651,6 @@ class Component extends DCLogic {
       }),
       genAllDesc: () => this.genAllDesc(),
       catalogQuery: st.catalogQuery, setCatalogQuery: e => this.setState({ catalogQuery: e.target.value }),
-      catalogSyncBusy: st.catalogSyncBusy,
-      catalogSyncLabel: st.catalogSyncBusy ? 'Searching…' : 'Search Shopify catalog',
       searchCatalog: () => this.searchCatalog(),
 
       tickets: st.tickets.map(t => this.ticketView(t)),
