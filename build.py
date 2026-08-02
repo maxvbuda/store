@@ -132,6 +132,18 @@ def main() -> None:
     # The markup hardcodes the old demo's model name; bind it to the live one.
     html = html.replace("Gemini writes in your", "{{ agentName }} writes in your")
 
+    # "Skip for now" in the setup wizard was wired to {{ signIn }}, which is a
+    # real login attempt now that accounts exist — it failed on empty fields.
+    # NB: this runs before DEMO_COPY swaps the label for {{ skipLabel }}, so
+    # match the raw template text.
+    SKIP_OLD = 'sc-camel-on-click="{{ signIn }}">Skip — use demo store</a>'
+    SKIP_NEW = 'sc-camel-on-click="{{ skipSetup }}">Skip — use demo store</a>'
+    if SKIP_OLD in html:
+        html = html.replace(SKIP_OLD, SKIP_NEW, 1)
+        print("skip button rebound to skipSetup")
+    else:
+        print("warning: skip button anchor not found")
+
     # --- Sign out ----------------------------------------------------------
     # The header shows a store-initials chip but had no way back out. Add a
     # sign-out button next to it, only while a session exists.

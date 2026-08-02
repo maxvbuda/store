@@ -31,13 +31,9 @@ const OPENROUTER = 'https://openrouter.ai/api/v1';
 // Preference order used when OPENROUTER_MODEL is not set. The first one the
 // account can actually see in /models wins.
 const MODEL_PREFERENCE = [
-  'anthropic/claude-opus-4.5',
-  'anthropic/claude-sonnet-4.5',
-  'anthropic/claude-3.7-sonnet',
-  'anthropic/claude-3.5-sonnet',
-  'openai/gpt-4o-mini',
-  'google/gemini-2.0-flash-001',
-  'meta-llama/llama-3.3-70b-instruct',
+  'deepseek/deepseek-v4-pro',
+  'deepseek/deepseek-v4-flash',
+  'deepseek/deepseek-v3.2',
 ];
 
 // ---------------------------------------------------------------- .env
@@ -164,19 +160,44 @@ async function handleModels(res) {
 }
 
 async function handleLLM(req, res) {
-  const key = apiKey();
-  if (!key) return send(res, 400, { error: 'No OpenRouter API key configured on the server.' });
-
   let body;
   try { body = await readBody(req); } catch (e) { return send(res, 400, { error: String(e.message) }); }
+  try {
+    const out = await askModel(body);
+    send(res, 200, out);
+  } catch (e) {
+    const status = /no openrouter api key/i.test(e.message) ? 400
+      : /unauthor|401/i.test(e.message) ? 401 : 502;
+    send(res, status, { error: String(e.message || e).slice(0, 400) });
+  }
+}
+
+/** One model call. Shared by POST /api/llm and the background agent. */
+async function askModel(body) {
+  const key = apiKey();
+  if (!key) throw new Error('No OpenRouter API key configured on the server.');
 
   const prompt = String(body.prompt || '').slice(0, 20000);
-  if (!prompt) return send(res, 400, { error: 'prompt is required' });
+  if (!prompt) throw new Error('prompt is required');
 
   const model = String(body.model || '').trim() || await pickModel();
   const messages = [];
   if (body.system) messages.push({ role: 'system', content: String(body.system).slice(0, 8000) });
-  messages.push({ role: 'user', content: prompt });
+
+  // `images` (data: URLs) turns this into a vision call — that's how the
+  // computer-use loop shows the model what's on screen.
+  const images = Array.isArray(body.images) ? body.images.slice(0, 4) : [];
+  if (images.length) {
+    messages.push({
+      role: 'user',
+      content: [
+        { type: 'text', text: prompt },
+        ...images.map(u => ({ type: 'image_url', image_url: { url: String(u) } })),
+      ],
+    });
+  } else {
+    messages.push({ role: 'user', content: prompt });
+  }
 
   // Reasoning models (DeepSeek V4 Pro, o-series, R1, …) spend max_tokens on
   // chain-of-thought before emitting a single output token. With a tight cap
@@ -223,7 +244,7 @@ async function handleLLM(req, res) {
     if (!r.ok) {
       const msg = (data && data.error && (data.error.message || data.error)) || ('OpenRouter HTTP ' + r.status);
       console.error('[llm] %s -> %s', model, msg);
-      return send(res, r.status === 401 ? 401 : 502, { error: String(msg).slice(0, 400) });
+      throw new Error(String(msg).slice(0, 400));
     }
 
     const choice = (data.choices && data.choices[0]) || {};
@@ -236,17 +257,16 @@ async function handleLLM(req, res) {
 
     if (!text) {
       // Almost always the reasoning-starvation case. Say so plainly.
-      const why = choice.finish_reason === 'length'
-        ? `${model} used its whole ${budget}-token budget on reasoning (${rtok} thinking tokens) and produced no answer. ` +
-          'Lower OPENROUTER_REASONING in .env (medium → low → off) or raise OPENROUTER_MAX_TOKENS.'
-        : `${model} returned an empty response (finish_reason: ${choice.finish_reason || 'unknown'}).`;
-      return send(res, 502, { error: why });
+      throw new Error(choice.finish_reason === 'length'
+        ? `${model} used its whole ${budget}-token budget on reasoning (${rtok} thinking tokens) and produced no answer. `
+          + 'Lower OPENROUTER_REASONING in .env (medium -> low -> off) or raise OPENROUTER_MAX_TOKENS.'
+        : `${model} returned an empty response (finish_reason: ${choice.finish_reason || 'unknown'}).`);
     }
 
-    send(res, 200, { text, model: data.model || model, usage: data.usage || null });
+    return { text, model: data.model || model, usage: data.usage || null };
   } catch (e) {
     console.error('[llm] failed:', e.message);
-    send(res, 502, { error: String(e.message || e).slice(0, 300) });
+    throw e;
   }
 }
 
@@ -283,6 +303,13 @@ async function handleCheckStore(req, res) {
 
 // Accounts + the shared-password gate.
 const auth = require('./lib/auth').create(env, send, readBody);
+// The agent's Chromium (Python sidecar, spawned on first use).
+const browser = require('./lib/browser').create(env, send, readBody);
+// The agent loop runs here, not in the page, so a closed tab doesn't kill it.
+const agent = require('./lib/agent').create(env, send, readBody, browser, askModel);
+process.on('exit', () => browser.stop());
+process.on('SIGINT', () => { browser.stop(); process.exit(0); });
+process.on('SIGTERM', () => { browser.stop(); process.exit(0); });
 
 const UNLOCK_PAGE = `<!doctype html><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>AutoStore AI</title>
@@ -324,6 +351,20 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/account/')) {
       if (await auth.handle(req, res, url)) return;
     }
+    if (url.pathname.startsWith('/api/browser/')) {
+      if (await browser.handle(req, res, url)) return;
+    }
+    if (url.pathname.startsWith('/api/agent/')) {
+      if (await agent.handle(req, res, url)) return;
+    }
+    // The agent console is the start page now. The original store app — login,
+    // products, marketing, support — still lives at /app.
+    if (url.pathname === '/' || url.pathname === '/browser' || url.pathname === '/browser/') {
+      return serveStatic(req, res, '/console.html');
+    }
+    if (url.pathname === '/app' || url.pathname === '/app/') {
+      return serveStatic(req, res, '/index.html');
+    }
 
     // The template ships no favicon; answer once instead of logging a 404.
     if (url.pathname === '/favicon.ico') {
@@ -339,6 +380,17 @@ const server = http.createServer(async (req, res) => {
     console.error(e);
     send(res, 500, { error: String(e.message || e) });
   }
+});
+
+// Two servers on one port is the fault behind most "503 / stuck starting"
+// reports: the second one keeps respawning a sidecar that can never bind.
+server.on('error', (e) => {
+  if (e.code === 'EADDRINUSE') {
+    console.error('\n  Port ' + PORT + ' is already in use — another copy of this server is running.');
+    console.error('  Stop it first:   lsof -ti tcp:' + PORT + ' | xargs kill\n');
+    process.exit(1);
+  }
+  throw e;
 });
 
 server.listen(PORT, HOST, () => {
