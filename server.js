@@ -377,7 +377,11 @@ const server = http.createServer(async (req, res) => {
     }
     // The agent console is the start page now. The original store app — login,
     // products, marketing, support — still lives at /app.
-    if (url.pathname === '/' || url.pathname === '/browser' || url.pathname === '/browser/') {
+    // Operator is the UI now; the earlier console stays at /console.
+    if (url.pathname === '/' || url.pathname === '/operator') {
+      return serveStatic(req, res, '/operator.html');
+    }
+    if (url.pathname === '/console' || url.pathname === '/browser' || url.pathname === '/browser/') {
       return serveStatic(req, res, '/console.html');
     }
     if (url.pathname === '/app' || url.pathname === '/app/') {
