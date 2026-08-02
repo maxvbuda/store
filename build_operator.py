@@ -62,6 +62,29 @@ COMPOSER = '''<sc-if value="{{ backlogOpen }}" hint-placeholder-val="{{ false }}
           </div>
         </sc-if>'''
 
+# The Computer screen's footer was a one-line step readout (counter / text /
+# call). It becomes a chat dock: a scrollable thread of what you said and what
+# the agent did, with an input bar — so driving the agent reads as a
+# conversation, not a fire-and-forget request. The progress line (progressRef)
+# is kept so the run progress bar still works and sync() still finds it.
+CHAT_DOCK = '''<div style="display: flex; flex-direction: column; gap: 12px; height: 214px;">
+          <div style="height: 1px; background: color-mix(in srgb, var(--color-text) 16%, transparent); position: relative;">
+            <span ref="{{ progressRef }}" style="position: absolute; left: 0; top: 0; height: 1px; width: 0%; background: var(--color-accent); display: block; transition: width 420ms ease;"></span>
+          </div>
+          <div ref="{{ chatRef }}" style="flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 9px; padding-right: 4px;">
+            <sc-for list="{{ chatThread }}" as="msg" hint-placeholder-count="3">
+              <div style="{{ msg.rowStyle }}">
+                <span style="{{ msg.metaStyle }}">{{ msg.who }}</span>
+                <span style="{{ msg.bubbleStyle }}">{{ msg.text }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <input value="{{ chatDraft }}" sc-camel-on-change="{{ setChatDraft }}" sc-camel-on-key-down="{{ onChatKey }}" placeholder="{{ chatPlaceholder }}" style="{{ chatInputStyle }}">
+            <button sc-camel-on-click="{{ sendChat }}" style="{{ takeoverStyle }}" style-hover="{{ takeoverHoverStyle }}">{{ chatSendLabel }}</button>
+          </div>
+        </div>'''
+
 
 def section(src: str, name: str) -> str:
     m = re.search(r'<script type="__bundler/%s">\s*(.*?)\s*</script>' % name, src, re.S)
@@ -106,6 +129,17 @@ def main() -> None:
         raise SystemExit("expected exactly one backlogOpen panel, found %d" % n)
     html = re.sub(r'<sc-if value="\{\{ backlogOpen \}\}".*?</sc-if>',
                   lambda _: COMPOSER, html, count=1, flags=re.S)
+
+    # Swap the Computer screen's step-readout footer for the chat dock. Anchored
+    # on progressRef + stepCall so it matches only that block.
+    footer_re = re.compile(
+        r'<div style="display: flex; flex-direction: column; gap: 14px;">\s*'
+        r'<div style="height: 1px;.*?\{\{ stepCall \}\}</span>\s*</div>\s*</div>',
+        re.S)
+    n = len(footer_re.findall(html))
+    if n != 1:
+        raise SystemExit("expected exactly one step-footer block, found %d" % n)
+    html = footer_re.sub(lambda _: CHAT_DOCK, html, count=1)
 
     # The digest header shipped as fixed copy ("Sunday 2 August", 47 tasks,
     # an eleven-hour summary). Bind each to the real run so Updates reflects

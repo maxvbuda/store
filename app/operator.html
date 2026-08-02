@@ -802,16 +802,21 @@ a:hover { color: var(--color-accent-700); }
         </sc-if>
         </div>
 
-        <div style="display: flex; flex-direction: column; gap: 14px;">
+        <div style="display: flex; flex-direction: column; gap: 12px; height: 214px;">
           <div style="height: 1px; background: color-mix(in srgb, var(--color-text) 16%, transparent); position: relative;">
             <span ref="{{ progressRef }}" style="position: absolute; left: 0; top: 0; height: 1px; width: 0%; background: var(--color-accent); display: block; transition: width 420ms ease;"></span>
           </div>
-          <div style="display: flex; align-items: center; justify-content: space-between; gap: 32px;">
-            <div style="display: flex; align-items: baseline; gap: 16px; min-width: 0;">
-              <span style="font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 45%, transparent); white-space: nowrap;">{{ stepCounter }}</span>
-              <span style="font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ stepText }}</span>
-            </div>
-            <span style="font-size: 12px; letter-spacing: 0.05em; color: color-mix(in srgb, var(--color-text) 45%, transparent); white-space: nowrap;">{{ stepCall }}</span>
+          <div ref="{{ chatRef }}" style="flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 9px; padding-right: 4px;">
+            <sc-for list="{{ chatThread }}" as="msg" hint-placeholder-count="3">
+              <div style="{{ msg.rowStyle }}">
+                <span style="{{ msg.metaStyle }}">{{ msg.who }}</span>
+                <span style="{{ msg.bubbleStyle }}">{{ msg.text }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <input value="{{ chatDraft }}" sc-camel-on-change="{{ setChatDraft }}" sc-camel-on-key-down="{{ onChatKey }}" placeholder="{{ chatPlaceholder }}" style="{{ chatInputStyle }}">
+            <button sc-camel-on-click="{{ sendChat }}" style="{{ takeoverStyle }}" style-hover="{{ takeoverHoverStyle }}">{{ chatSendLabel }}</button>
           </div>
         </div>
       </div>
@@ -822,6 +827,19 @@ a:hover { color: var(--color-accent-700); }
 
 </x-dc>
 <script type="text/x-dc" data-dc-script="" data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;startPage&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;computer&quot;,&quot;status&quot;,&quot;updates&quot;],&quot;default&quot;:&quot;computer&quot;,&quot;tsType&quot;:&quot;'computer' | 'status' | 'updates'&quot;,&quot;section&quot;:&quot;Behaviour&quot;},&quot;autoPlay&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Behaviour&quot;},&quot;stepMs&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:900,&quot;min&quot;:300,&quot;max&quot;:2400,&quot;step&quot;:100,&quot;unit&quot;:&quot;ms&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Behaviour&quot;},&quot;frameSrc&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Live agent&quot;}}">
+
+// The chat thread lives in localStorage so a reload doesn't wipe the
+// conversation. Bounded so it can't grow without limit.
+const CHAT_KEY = 'operator.chat.v1';
+function loadChat() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CHAT_KEY) || '[]');
+    return Array.isArray(raw) ? raw.slice(-120) : [];
+  } catch (e) { return []; }
+}
+function saveChat(chat) {
+  try { localStorage.setItem(CHAT_KEY, JSON.stringify(chat.slice(-120))); } catch (e) {}
+}
 
 const STEPS = [
   { a: 'screenshot', x: 640, y: 400, call: 'screenshot()', text: 'Read the screen' },
@@ -883,8 +901,13 @@ class Component extends DCLogic {
       // live data, polled from the server
       run: null, updates: [], browserOk: false, model: '', pageTitle: '', pageUrl: '',
       goalDraft: '', composerError: '',
-      manualUrl: ''
+      manualUrl: '',
+      chat: loadChat(),        // the conversation thread, persisted across reloads
+      chatDraft: ''
     };
+    // Which run-log entries are already in the thread — keyed so streaming
+    // entries append once and in order.
+    this.chatKeys = new Set(this.state.chat.filter(m => m.key).map(m => m.key));
     // Keystrokes are buffered and flushed as one /type call — per-key requests
     // arrive out of order on a slow link and typing comes out scrambled.
     this.typeBuf = '';
@@ -902,6 +925,7 @@ class Component extends DCLogic {
     this.cursorRef = React.createRef();
     this.rippleRef = React.createRef();
     this.progressRef = React.createRef();
+    this.chatRef = React.createRef();
     this.frameRef = React.createRef();
     this.frameBoxRef = React.createRef();
     this.scale = 0.8;
@@ -923,6 +947,7 @@ class Component extends DCLogic {
     // Take-over keyboard: window-level so no element needs focus first.
     this.keyHandler = (e) => this.onManualKey(e);
     window.addEventListener('keydown', this.keyHandler, true);
+    this.scrollChat();
   }
 
   /** Fallback screenshot cadence — faster while a human is driving. */
@@ -1008,11 +1033,64 @@ class Component extends DCLogic {
     if (this.streamDown) { this.tick++; this.sync(); }
   }
 
+  /**
+   * Fold the agent's run log into the chat thread as replies. The log is
+   * newest-first and grows in place, so we walk it oldest-first and append
+   * only entries we have not shown, keyed by run + timestamp + text.
+   */
+  absorbLog(run) {
+    if (!run || !Array.isArray(run.log) || !run.log.length) return;
+    const fresh = [];
+    for (let i = run.log.length - 1; i >= 0; i--) {   // oldest first
+      const e = run.log[i];
+      const key = run.id + '|' + (e.at || i) + '|' + (e.text || '');
+      if (this.chatKeys.has(key)) continue;
+      this.chatKeys.add(key);
+      fresh.push({ role: 'agent', kind: e.kind || '', text: e.text || '', at: e.at, key });
+    }
+    if (!fresh.length) return;
+    const chat = this.state.chat.concat(fresh).slice(-120);
+    saveChat(chat);
+    this.setState({ chat }, () => this.scrollChat());
+  }
+
+  /** Send a chat message — it becomes the agent's next goal. */
+  sendChat() {
+    const text = (this.state.chatDraft || '').trim();
+    if (!text) return;
+    const r = this.state.run;
+    if (r && r.status === 'running') {
+      this.pushChat({ role: 'note', text: 'The agent is still on the last task — one at a time for now.' });
+      return;
+    }
+    this.pushChat({ role: 'you', text });
+    this.setState({ chatDraft: '' });
+    fetch('/api/agent/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal: text, maxSteps: 12 }),
+    }).then(r => r.json()).then(d => {
+      if (d && d.error) this.pushChat({ role: 'note', text: d.error });
+      this.poll();
+    }).catch(e => this.pushChat({ role: 'note', text: 'Server unreachable: ' + (e.message || e) }));
+  }
+
+  pushChat(msg) {
+    const chat = this.state.chat.concat([msg]).slice(-120);
+    saveChat(chat);
+    this.setState({ chat }, () => this.scrollChat());
+  }
+
+  scrollChat() {
+    const el = this.chatRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }
+
   /** Pull the real agent run and browser state. */
   async poll() {
     try {
       const a = await (await fetch('/api/agent/status', { cache: 'no-store' })).json();
       this.setState({ run: a.run, updates: (a.run && a.run.log) || [] });
+      this.absorbLog(a.run);
     } catch (e) { /* server restarting */ }
     try {
       const b = await (await fetch('/api/browser/status', { cache: 'no-store' })).json();
@@ -1482,6 +1560,58 @@ class Component extends DCLogic {
         },
         hoverStyle: { background: 'color-mix(in srgb, var(--color-text) 7%, transparent)' },
       })),
+      // ---- chat dock -----------------------------------------------------
+      chatDraft: st.chatDraft,
+      setChatDraft: e => this.setState({ chatDraft: e.target.value }),
+      onChatKey: e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.sendChat(); } },
+      sendChat: () => this.sendChat(),
+      chatSendLabel: busy ? 'Working…' : 'Send',
+      chatPlaceholder: busy
+        ? 'The agent is working — messages queue after it finishes'
+        : 'Message the agent — e.g. open my Shopify orders',
+      chatInputStyle: {
+        flex: 1, minWidth: 0, font: 'inherit', fontSize: '14.5px', padding: '10px 14px',
+        border: '1px solid color-mix(in srgb, var(--color-text) 26%, transparent)',
+        borderRadius: '7px', background: 'var(--color-neutral-50, #fff)',
+        color: 'var(--color-text)', outline: 'none',
+      },
+      chatThread: (st.chat.length ? st.chat : [{ role: 'note',
+        text: 'Say what you want done and watch it happen on the screen above.' }]
+      ).map((m, i) => {
+        const mine = m.role === 'you';
+        const note = m.role === 'note';
+        const needsYou = m.kind === 'needs_human' || m.kind === 'error';
+        return {
+          key: 'm' + i + (m.at || ''),
+          who: mine ? 'You' : note ? '' : (m.kind === 'done' ? 'Result'
+            : m.kind === 'goal' ? 'Goal' : 'Agent'),
+          text: m.text,
+          rowStyle: {
+            display: 'flex', flexDirection: 'column', gap: '3px',
+            alignItems: mine ? 'flex-end' : 'flex-start',
+          },
+          metaStyle: {
+            fontSize: '9.5px', letterSpacing: '0.14em', textTransform: 'uppercase',
+            color: needsYou ? 'var(--color-accent-700)'
+              : 'color-mix(in srgb, var(--color-text) 42%, transparent)',
+            display: m.role === 'note' ? 'none' : 'block',
+          },
+          bubbleStyle: {
+            maxWidth: '80%', fontSize: '14px', lineHeight: '20px', padding: '8px 12px',
+            borderRadius: mine ? '12px 12px 3px 12px' : '12px 12px 12px 3px',
+            background: mine ? 'var(--color-accent)'
+              : note ? 'transparent'
+              : 'color-mix(in srgb, var(--color-text) 7%, transparent)',
+            color: mine ? '#fff' : note
+              ? 'color-mix(in srgb, var(--color-text) 55%, transparent)'
+              : 'var(--color-text)',
+            border: needsYou ? '1px solid var(--color-accent-700)' : 'none',
+            fontStyle: note ? 'italic' : 'normal',
+            whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+          },
+        };
+      }),
+
       backlogHint: st.backlog ? 'close' : (liveUpdates.length + ' logged'),
       titleBtnStyle: {
         display: 'flex', alignItems: 'center', gap: '12px', background: 'transparent', border: 0,
