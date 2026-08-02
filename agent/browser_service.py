@@ -106,6 +106,39 @@ ELEMENTS_JS = r"""
 """
 
 
+def reap_orphans():
+    """Kill any Chromium still holding our profile.
+
+    A sidecar that is SIGKILLed cannot close its browser, so the Chromium
+    survives as an orphan. The next sidecar then launches a second one while
+    the stale window lingers and /state disagrees with what is on screen.
+    Only one sidecar ever owns a profile, so anything using it now is dead wood.
+    """
+    import subprocess
+    try:
+        out = subprocess.run(["pgrep", "-f", str(PROFILE)],
+                             capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return 0
+    me = os.getpid()
+    killed = 0
+    for line in out.split():
+        try:
+            pid = int(line)
+        except ValueError:
+            continue
+        if pid == me:
+            continue
+        try:
+            os.kill(pid, 9)
+            killed += 1
+        except OSError:
+            pass
+    if killed:
+        print("reaped %d orphaned browser process(es) holding the profile" % killed, flush=True)
+    return killed
+
+
 def teardown():
     """Release Chromium AND the Playwright driver. Nulling the handles without
     calling stop() leaves the driver's event loop registered in this thread, and
@@ -126,6 +159,7 @@ def ensure(headless: bool):
     if state["page"] is not None:
         return state["page"]
     PROFILE.mkdir(parents=True, exist_ok=True)
+    reap_orphans()
     # A hard-killed Chromium leaves Singleton* behind and the next launch hangs
     # or refuses. Nothing else is using this profile — we are the only user.
     for lockname in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
@@ -309,6 +343,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(500, {"error": str(e)[:300]})
 
 
+def _on_signal(signum, frame):
+    """SIGTERM should close Chromium, not orphan it."""
+    try:
+        teardown()
+    finally:
+        os._exit(0)
+
+
 def watch_parent(ppid: int):
     """Exit if the Node server that spawned us goes away, so we never orphan
     a Chromium holding the profile lock and the port."""
@@ -316,7 +358,10 @@ def watch_parent(ppid: int):
     while True:
         time.sleep(2)
         if os.getppid() != ppid:
-            os._exit(0)
+            try:
+                teardown()
+            finally:
+                os._exit(0)
 
 
 def main():
@@ -325,6 +370,10 @@ def main():
     ap.add_argument("--headless", action="store_true",
                     help="run Chromium hidden (the live view still works)")
     args = ap.parse_args()
+
+    import signal
+    signal.signal(signal.SIGTERM, _on_signal)
+    signal.signal(signal.SIGINT, _on_signal)
 
     if os.getppid() != 1:
         threading.Thread(target=watch_parent, args=(os.getppid(),), daemon=True).start()
