@@ -346,12 +346,16 @@ def ensure(headless: bool):
     """(worker thread) Start Chromium once; reuse it afterwards."""
     page = state["page"]
     if page is not None:
-        # A page that has closed under us (renderer crash, target gone) must not
-        # be handed back — every op on it throws "Target page has been closed".
-        # Tear it down so the relaunch below gives callers a live page instead
-        # of waiting on the 5-minute watchdog.
+        # A page that has closed or crashed under us must not be handed back —
+        # every op on it throws "Target page has been closed" / "Target
+        # crashed". is_closed() alone misses a crash: Playwright's Crash event
+        # never flips that flag, only an explicit close() does. So actually
+        # touch the target (title() is a cheap CDP round trip) to catch a
+        # crashed-but-not-closed page too. Tear down and relaunch below
+        # instead of waiting on the 5-minute watchdog.
         try:
             if not page.is_closed():
+                page.title()
                 return page
         except Exception:
             pass
