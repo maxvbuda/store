@@ -1,7 +1,7 @@
 
 // The chat thread lives in localStorage so a reload doesn't wipe the
 // conversation. Bounded so it can't grow without limit.
-const CHAT_KEY = 'operator.chat.v1';
+const CHAT_KEY = 'shopagent.chat.v1';
 function loadChat() {
   try {
     const raw = JSON.parse(localStorage.getItem(CHAT_KEY) || '[]');
