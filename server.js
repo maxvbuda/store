@@ -21,6 +21,11 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
+function setCookie(name, value, req, maxAge) {
+  const isHttps = (req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+  return `${name}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}` + (isHttps ? '; Secure' : '');
+}
+
 const ROOT = __dirname;
 const APP_DIR = path.join(ROOT, 'app');
 const ENV_FILE = path.join(ROOT, '.env');
@@ -339,16 +344,19 @@ const UNLOCK_PAGE = `<!doctype html><meta charset="utf-8">
  div{width:min(92vw,340px);text-align:center} h1{font-size:19px;margin:0 0 4px;letter-spacing:-.01em}
  p{margin:0 0 20px;color:#666;font-size:13px}
  button{width:100%;padding:16px;border:0;background:linear-gradient(135deg, #3b82f6, #8b5cf6);color:#fff;font-size:16px;font-weight:800;cursor:pointer;border-radius:0;box-shadow:0 4px 12px rgba(59, 130, 246, 0.3);text-decoration:none;margin-bottom:12px}
- input{width:100%;padding:12px;border:1px solid #ccc;background:#fff;font-size:15px;margin-bottom:10px}
  .or{color:#999;font-size:12px;margin:10px 0}
 </style>
 <h1>Shop Agent</h1>
 <p>Subscribe to access Shop Agent.</p>
-<a href="https://www.foundersweekends.com/api/pay?venture=5fafe8d0-8f98-4405-9ed7-752846dbccfa&amount=2800&name=Venture+1" target="_blank" onclick="localStorage.setItem('shopagent_paid', 'true'); setTimeout(() => window.location.reload(), 2000);" style="display:inline-block">Subscribe — $28</a>
+<a href="https://www.foundersweekends.com/api/pay?venture=5fafe8d0-8f98-4405-9ed7-752846dbccfa&amount=2800&name=Venture+1" onclick="localStorage.setItem('shopagent_pending', 'true'); setTimeout(() => window.location.reload(), 2000);" style="display:inline-block">Subscribe — $28</a>
 <div class="or">Or enter password</div>
 <form id="f"><input id="p" type="password" placeholder="Password" autofocus autocomplete="current-password">
 <button type="submit">Unlock</button></form>
 <script>
+if (localStorage.getItem('shopagent_pending') === 'true') {
+  localStorage.removeItem('shopagent_pending');
+  fetch('/api/payment-success', {method:'POST'}).then(() => location.reload());
+}
 f.onsubmit = async ev => {
   ev.preventDefault();
   const r = await fetch('/api/unlock', {method:'POST',headers:{'Content-Type':'application/json'},
@@ -368,8 +376,23 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/payment-success' && req.method === 'POST') {
       // For now, accept any POST as successful payment
       // In production: verify Stripe webhook signature and check payment_status
-      const gateToken = crypto.createHmac('sha256', env('APP_PASSWORD', '')).update('unlock-v1').digest('hex');
+      const gatePassword = env('APP_PASSWORD', '');
+      const gateToken = crypto.createHmac('sha256', gatePassword).update('unlock-v1').digest('hex');
       send(res, 200, { ok: true }, { 'Set-Cookie': setCookie(GATE_COOKIE, gateToken, req, 30 * DAY) });
+      return;
+    }
+    // Payment success GET endpoint - for redirect handling
+    if (url.pathname === '/payment-success' && req.method === 'GET') {
+      const gatePassword = env('APP_PASSWORD', '');
+      const gateToken = crypto.createHmac('sha256', gatePassword).update('unlock-v1').digest('hex');
+      send(res, 200, UNLOCK_PAGE.replace('Subscribe to access Shop Agent', 'Payment successful! Unlocked.'), { 'Set-Cookie': setCookie(GATE_COOKIE, gateToken, req, 30 * DAY) });
+      return;
+    }
+    // Payment success page (GET) - triggers the unlock
+    if (url.pathname === '/payment-success' && req.method === 'GET') {
+      const gatePassword = env('APP_PASSWORD', '');
+      const gateToken = crypto.createHmac('sha256', gatePassword).update('unlock-v1').digest('hex');
+      send(res, 200, UNLOCK_PAGE.replace('Subscribe to access Shop Agent', 'Payment successful! Redirecting...'), { 'Set-Cookie': setCookie(GATE_COOKIE, gateToken, req, 30 * DAY) });
       return;
     }
     // The agent's OWN browser boots to this page and never has a gate cookie,
