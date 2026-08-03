@@ -1,33 +1,43 @@
 # Python dependencies for the agent browser (agent/browser_service.py).
 #
 #   python3 -m pip install -r requirements.txt
-#   python3 -m playwright install chromium      # <- REQUIRED, see below
 #
 # The Node server needs `npm install` as well — it pulls @supabase/supabase-js,
 # which is only loaded when Supabase is configured. This file covers just the
 # computer-use browser at /  — everything else (accounts, the store app, the
 # OpenRouter proxy) runs without it.
 
-# Browser automation. The sidecar drives Chromium through this.
+# Browser automation. The sidecar drives Chromium through this — either a
+# locally-launched one, or (with KERNEL_API_KEY set) a remote one on Kernel's
+# infrastructure, connected over CDP.
 playwright==1.61.0
+
+# Talks to Kernel (onkernel.com) when KERNEL_API_KEY is set: creates a remote
+# browser instead of launching Chromium in this process. This is what makes
+# the browser deployable on a constrained host at all — see render.yaml.
+kernel
 
 # Anti-detection patches, applied to every page. This is the same mechanism
 # Crawl4AI's StealthAdapter uses. Without it the browser advertises itself as
 # automated (navigator.webdriver etc.) and trips Cloudflare more readily.
+# Only matters for a locally-launched browser — a Kernel browser handles its
+# own stealth (client.browsers.create(stealth=True)).
 playwright-stealth==2.0.3
 
 # Optional, opt-in via BROWSER_DRIVER=patchright. A drop-in Playwright
-# replacement with stronger anti-detection. Its Chromium self-exited a few
-# seconds after launch during testing on macOS/arm64, so it is NOT the default.
+# replacement with stronger anti-detection, for a locally-launched browser.
+# Its Chromium self-exited a few seconds after launch during testing on
+# macOS/arm64, so it is NOT the default.
 patchright==1.61.2
 
 # --------------------------------------------------------------------------
-# The browser binary is NOT a pip package and pip will not fetch it. After
-# installing the above you MUST run:
+# Local Chromium (no KERNEL_API_KEY) still needs the browser binary, which is
+# NOT a pip package — pip will not fetch it:
 #
 #     python3 -m playwright install chromium
 #
 # If it goes missing later the console reports it directly. The symptom is a
 # 500 from /api/browser/*; the underlying error is
-# "Executable doesn't exist at .../Google Chrome for Testing.app".
+# "Executable doesn't exist at .../Google Chrome for Testing.app". With
+# KERNEL_API_KEY set, this step is unnecessary — Kernel provides the browser.
 # --------------------------------------------------------------------------

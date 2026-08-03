@@ -2,17 +2,23 @@ services:
   - type: web
     name: shop-agent
     runtime: node
-    # Chromium OOMs at launch on the free tier's 512 MB — DEPLOY.md calls for
-    # at least 2 GB. NOTE: if this file drives a Blueprint, the plan set here
-    # changes what Render bills.
+    # standard was needed because a *local* Chromium OOMs on the free tier's
+    # 512 MB. With KERNEL_API_KEY set, Chromium runs on Kernel's
+    # infrastructure instead — nothing heavy runs in this container anymore,
+    # so it's worth trying `plan: starter` (or free) again once Kernel is
+    # confirmed working; this wasn't downgraded automatically since it's a
+    # billing change. NOTE: if this file drives a Blueprint, the plan set
+    # here changes what Render bills.
     plan: standard
-    # Installs the Node deps, then the Python side (agent browser + Playwright's
-    # Chromium) needed by the computer-use console at /. No --with-deps: that
-    # flag shells out to apt-get as root, which Render's build sandbox
-    # refuses non-interactively ("su: Authentication failure").
-    # PLAYWRIGHT_BROWSERS_PATH is load-bearing: only the project directory
-    # survives from build to runtime, so Chromium must land inside the repo.
-    buildCommand: "npm install && pip install -r requirements.txt && PLAYWRIGHT_BROWSERS_PATH=$PWD/.playwright python3 -m playwright install chromium"
+    # Node deps, then the Python side (agent browser). No `playwright install
+    # chromium` anymore: with KERNEL_API_KEY set, the browser runs on
+    # Kernel's infrastructure over CDP — only the `playwright` driver package
+    # is needed here, not the browser binary itself. If KERNEL_API_KEY is
+    # ever unset, the local-Chromium fallback in agent/browser_service.py
+    # will correctly report "Chromium is not installed" rather than trying
+    # (and OOMing, or hitting the old --with-deps root/apt problem) to launch
+    # one in this container.
+    buildCommand: "npm install && pip install -r requirements.txt"
     startCommand: node server.js
     envVars:
       # Set the value in the Render dashboard — never commit the key.
@@ -33,4 +39,8 @@ services:
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # onkernel.com — runs Chromium on Kernel's infrastructure instead of
+      # this container. Required for the agent browser to work in production.
+      - key: KERNEL_API_KEY
         sync: false
