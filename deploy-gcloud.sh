@@ -79,7 +79,7 @@ User=store
 WorkingDirectory=/opt/store/store
 # Wrapped in xvfb-run so Chromium launches headed against a virtual display —
 # the sidecar must NOT add --headless, which is why BROWSER_HEADLESS is unset.
-ExecStart=/usr/bin/xvfb-run -a --server-args=-screen 0 1280x800x24 /usr/bin/node server.js
+ExecStart=/usr/bin/xvfb-run -a --server-args="-screen 0 1280x800x24" /usr/bin/node server.js
 Restart=always
 RestartSec=5
 Environment=PORT=8787
