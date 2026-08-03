@@ -367,14 +367,12 @@ def ensure(headless: bool):
         raise
     # Launched cleanly — clear any stale error from a previous failed attempt.
     state["last_launch_error"] = None
-    # Close anything the profile restored, then work from one known tab.
-    pages = list(state["ctx"].pages)
-    state["page"] = pages[0] if pages else state["ctx"].new_page()
-    for extra in pages[1:]:
-        try:
-            extra.close()
-        except Exception:
-            pass
+    # Own tab is a BRAND-NEW page, never a restored one — so even if the
+    # profile revives old tabs (a signed-in Google, a page from testing) our
+    # view is guaranteed clean. Everything else gets closed below.
+    restored = list(state["ctx"].pages)
+    state["page"] = state["ctx"].new_page()
+    _close_others(state["page"])
     if _stealth is not None:
         try:
             _stealth.apply_stealth_sync(state["page"])
@@ -394,7 +392,24 @@ def ensure(headless: bool):
             state["page"].goto(START_URL, wait_until="commit", timeout=20000)
         except Exception as e2:
             print("start page still unreachable: %s" % str(e2)[:90], flush=True)
+    # Tabs the profile restores can arrive a beat late; sweep once more so a
+    # slow Google/bot-check tab can't end up the visible one.
+    _close_others(state["page"])
     return state["page"]
+
+
+def _close_others(keep):
+    """(worker) close every page in the context except `keep`."""
+    ctx = state.get("ctx")
+    if ctx is None:
+        return
+    for pg in list(ctx.pages):
+        if pg is keep:
+            continue
+        try:
+            pg.close()
+        except Exception:
+            pass
 
 
 def _launch(headless: bool):
