@@ -1085,7 +1085,7 @@ class Component extends DCLogic {
     this.setState({ chatDraft: '' });
     fetch('/api/agent/start', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ goal: text, maxSteps: 12 }),
+      body: JSON.stringify({ goal: text }),   // no step limit — runs until done or stopped
     }).then(r => r.json()).then(d => {
       if (d && d.error) this.pushChat({ role: 'note', text: d.error });
       this.poll();
@@ -1136,7 +1136,7 @@ class Component extends DCLogic {
     try {
       const res = await fetch('/api/agent/start', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ goal, maxSteps: 12 }),
+        body: JSON.stringify({ goal }),   // no step limit — runs until done or stopped
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -1410,7 +1410,9 @@ class Component extends DCLogic {
         task: clamp(r.goal, 90) || 'No goal set',
         detail: running ? ('Step ' + r.step + ' of ' + r.maxSteps)
           : clamp(r.answer || r.error || 'Waiting for a goal', 110),
-        queue: running ? String(Math.max(0, (r.maxSteps || 0) - (r.step || 0))) : '0',
+        queue: running
+          ? (r.maxSteps === '∞' ? '∞' : String(Math.max(0, (r.maxSteps || 0) - (r.step || 0))))
+          : '0',
         state: STATE_LABEL[r.status] || 'Idle',
         dotStyle: liveDot,
       },
