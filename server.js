@@ -19,6 +19,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const ROOT = __dirname;
 const APP_DIR = path.join(ROOT, 'app');
@@ -335,21 +336,24 @@ const UNLOCK_PAGE = `<!doctype html><meta charset="utf-8">
 <style>
  *{box-sizing:border-box} body{margin:0;min-height:100vh;display:flex;align-items:center;
    justify-content:center;background:#f4f4f2;font:15px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;color:#111}
- form{width:min(92vw,340px)} h1{font-size:19px;margin:0 0 4px;letter-spacing:-.01em}
+ div{width:min(92vw,340px);text-align:center} h1{font-size:19px;margin:0 0 4px;letter-spacing:-.01em}
  p{margin:0 0 20px;color:#666;font-size:13px}
+ button{width:100%;padding:16px;border:0;background:linear-gradient(135deg, #3b82f6, #8b5cf6);color:#fff;font-size:16px;font-weight:800;cursor:pointer;border-radius:0;box-shadow:0 4px 12px rgba(59, 130, 246, 0.3);text-decoration:none;margin-bottom:12px}
  input{width:100%;padding:12px;border:1px solid #ccc;background:#fff;font-size:15px;margin-bottom:10px}
- button{width:100%;padding:12px;border:0;background:#ec3013;color:#fff;font-size:15px;font-weight:600;cursor:pointer}
- .err{color:#ec3013;font-size:13px;min-height:18px;margin-top:8px}
+ .or{color:#999;font-size:12px;margin:10px 0}
 </style>
-<form id="f"><h1>Shop Agent</h1><p>This instance is password protected.</p>
-<input id="p" type="password" placeholder="Password" autofocus autocomplete="current-password">
-<button>Unlock</button><div class="err" id="e"></div></form>
+<h1>Shop Agent</h1>
+<p>Subscribe to access Shop Agent.</p>
+<a href="https://www.foundersweekends.com/api/pay?venture=5fafe8d0-8f98-4405-9ed7-752846dbccfa&amount=2800&name=Venture+1" target="_blank" onclick="localStorage.setItem('shopagent_paid', 'true'); setTimeout(() => window.location.reload(), 2000);" style="display:inline-block">Subscribe — $28</a>
+<div class="or">Or enter password</div>
+<form id="f"><input id="p" type="password" placeholder="Password" autofocus autocomplete="current-password">
+<button type="submit">Unlock</button></form>
 <script>
 f.onsubmit = async ev => {
-  ev.preventDefault(); e.textContent = '';
+  ev.preventDefault();
   const r = await fetch('/api/unlock', {method:'POST',headers:{'Content-Type':'application/json'},
     body: JSON.stringify({password: p.value})});
-  if (r.ok) location.reload(); else { e.textContent = 'Incorrect password.'; p.select(); }
+  if (r.ok) location.reload(); else { alert('Incorrect password.'); p.select(); }
 };
 </script>`;
 
@@ -359,6 +363,14 @@ const server = http.createServer(async (req, res) => {
     // /api/unlock is the only route reachable while locked.
     if (url.pathname === '/api/unlock') {
       if (await auth.handle(req, res, url)) return;
+    }
+    // Payment success endpoint - simplified version (in production, use Stripe webhook verification)
+    if (url.pathname === '/api/payment-success' && req.method === 'POST') {
+      // For now, accept any POST as successful payment
+      // In production: verify Stripe webhook signature and check payment_status
+      const gateToken = crypto.createHmac('sha256', env('APP_PASSWORD', '')).update('unlock-v1').digest('hex');
+      send(res, 200, { ok: true }, { 'Set-Cookie': setCookie(GATE_COOKIE, gateToken, req, 30 * DAY) });
+      return;
     }
     // The agent's OWN browser boots to this page and never has a gate cookie,
     // so the gate would trap it on the unlock screen — which is exactly the
