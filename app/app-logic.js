@@ -461,7 +461,7 @@ class Component extends DCLogic {
     try {
       const answer = await this.llm(
         this.brandBrief() +
-        '\n\nYou are the operator of this store, talking to its owner. ' +
+        '\n\nYou are the Shop Agent of this store, talking to its owner. ' +
         'Answer the message below directly and usefully. If it asks you to do something you can actually reason about ' +
         '(pricing, copy, planning, analysis), do it now in your reply rather than promising to do it later.\n\n' +
         `Owner: ${text}`,
