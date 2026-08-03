@@ -278,6 +278,45 @@ def _attach_screencast():
         print("startScreencast failed: %s" % str(e)[:90], flush=True)
 
 
+def _clean_start():
+    """(worker thread) Make Chromium open a clean slate, not last time's tabs.
+
+    We SIGKILL the sidecar's Chromium, so it never records a clean shutdown —
+    exit_type stays "Crashed", and Chromium then restores the previous session
+    (e.g. a bot-check page opened during testing) no matter that
+    --restore-last-session is stripped. Two things stop that, and neither
+    touches Cookies / Login Data, so logins still survive:
+      1. mark the last exit clean in Preferences
+      2. delete the session/tab-restore journals
+    """
+    prefs = PROFILE / "Default" / "Preferences"
+    try:
+        d = json.loads(prefs.read_text())
+        prof = d.setdefault("profile", {})
+        prof["exit_type"] = "Normal"
+        prof["exited_cleanly"] = True
+        # If a previous run pinned session restore, neutralise it (1 = last).
+        sess = d.get("session")
+        if isinstance(sess, dict) and sess.get("restore_on_startup") == 1:
+            sess["restore_on_startup"] = 5  # open the New Tab Page
+        prefs.write_text(json.dumps(d))
+    except (OSError, ValueError):
+        pass  # no prefs yet (first launch) — nothing to clean
+
+    sessions = PROFILE / "Default" / "Sessions"
+    try:
+        for f in sessions.iterdir():
+            if f.name.startswith(("Session_", "Tabs_")):
+                f.unlink()
+    except OSError:
+        pass
+    for name in ("Current Session", "Current Tabs", "Last Session", "Last Tabs"):
+        try:
+            (PROFILE / "Default" / name).unlink()
+        except OSError:
+            pass
+
+
 def ensure(headless: bool):
     """(worker thread) Start Chromium once; reuse it afterwards."""
     page = state["page"]
@@ -303,6 +342,7 @@ def ensure(headless: bool):
             pass
         except OSError:
             pass
+    _clean_start()
     try:
         state["pw"] = sync_playwright().start()
     except Exception as e:
