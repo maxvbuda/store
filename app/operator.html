@@ -537,7 +537,7 @@ a:hover { color: var(--color-accent-700); }
   <aside style="display: flex; flex-direction: column; padding: 30px 24px 24px; border-right: 1px solid color-mix(in srgb, var(--color-text) 12%, transparent);">
     <div style="display: flex; align-items: center; gap: 9px; margin-bottom: 52px;">
       <span style="width: 7px; height: 7px; background: var(--color-accent); display: block;"></span>
-      <span style="font-size: 12px; letter-spacing: 0.22em; text-transform: uppercase;">Shop Agent</span>
+      <span style="font-size: 12px; letter-spacing: 0.22em; text-transform: uppercase;">Operator</span>
     </div>
 
     <nav style="display: flex; flex-direction: column; gap: 2px;">
@@ -1054,13 +1054,23 @@ class Component extends DCLogic {
     this.setState({ chat }, () => this.scrollChat());
   }
 
-  /** Send a chat message — it becomes the agent's next goal. */
+  /** Send a chat message — a new goal when idle, a nudge while running. */
   sendChat() {
     const text = (this.state.chatDraft || '').trim();
     if (!text) return;
     const r = this.state.run;
     if (r && r.status === 'running') {
-      this.pushChat({ role: 'note', text: 'The agent is still on the last task — one at a time for now.' });
+      // The longrun backend queues mid-run steering; the built-in loop can't.
+      this.pushChat({ role: 'you', text });
+      this.setState({ chatDraft: '' });
+      fetch('/api/agent/nudge', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      }).then(res => res.json()).then(d => {
+        this.pushChat({ role: 'note', text: d && d.ok
+          ? 'Nudge queued — it lands at the next turn.'
+          : 'Still on the last task — this backend takes one goal at a time.' });
+      }).catch(() => {});
       return;
     }
     this.pushChat({ role: 'you', text });

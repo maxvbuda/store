@@ -225,13 +225,23 @@ class Component extends DCLogic {
     this.setState({ chat }, () => this.scrollChat());
   }
 
-  /** Send a chat message — it becomes the agent's next goal. */
+  /** Send a chat message — a new goal when idle, a nudge while running. */
   sendChat() {
     const text = (this.state.chatDraft || '').trim();
     if (!text) return;
     const r = this.state.run;
     if (r && r.status === 'running') {
-      this.pushChat({ role: 'note', text: 'The agent is still on the last task — one at a time for now.' });
+      // The longrun backend queues mid-run steering; the built-in loop can't.
+      this.pushChat({ role: 'you', text });
+      this.setState({ chatDraft: '' });
+      fetch('/api/agent/nudge', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      }).then(res => res.json()).then(d => {
+        this.pushChat({ role: 'note', text: d && d.ok
+          ? 'Nudge queued — it lands at the next turn.'
+          : 'Still on the last task — this backend takes one goal at a time.' });
+      }).catch(() => {});
       return;
     }
     this.pushChat({ role: 'you', text });
