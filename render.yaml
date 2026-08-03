@@ -24,6 +24,10 @@ services:
       # Set the value in the Render dashboard — never commit the key.
       - key: OPENROUTER_API_KEY
         sync: false
+      # Optional. Separate OpenRouter account used only for the free
+      # fallback model once OPENROUTER_API_KEY's credit runs out.
+      - key: OPENROUTER_FALLBACK_API_KEY
+        sync: false
       # Required on a public URL: without it /api/llm is an open proxy anyone
       # can bill against the key. Set the value in the dashboard.
       - key: APP_PASSWORD

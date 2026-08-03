@@ -45,6 +45,10 @@ const MODEL_PREFERENCE = [
   'deepseek/deepseek-v3.2',
 ];
 
+// Used when the configured model's OpenRouter credit runs out mid-request,
+// so the app degrades to a free model instead of failing outright.
+const FALLBACK_MODEL = 'inclusionai/ling-3.0-flash:free';
+
 // ---------------------------------------------------------------- .env
 
 let envCache = { mtime: 0, values: {} };
@@ -78,6 +82,14 @@ function env(name, fallback) {
 function apiKey() {
   const k = env('OPENROUTER_API_KEY', '');
   return k && !k.startsWith('sk-or-v1-your') ? k : '';
+}
+
+// Separate OpenRouter account used only for the free fallback model, so it
+// keeps working even after the primary key's credit is exhausted. Falls
+// back to the primary key if no separate one is configured.
+function fallbackApiKey() {
+  const k = env('OPENROUTER_FALLBACK_API_KEY', '');
+  return k && !k.startsWith('sk-or-v1-your') ? k : apiKey();
 }
 
 // ------------------------------------------------------------- model
@@ -189,7 +201,7 @@ async function askModel(body) {
   const prompt = String(body.prompt || '').slice(0, 20000);
   if (!prompt) throw new Error('prompt is required');
 
-  const model = String(body.model || '').trim() || await pickModel();
+  let model = String(body.model || '').trim() || await pickModel();
   const messages = [];
   if (body.system) messages.push({ role: 'system', content: String(body.system).slice(0, 8000) });
 
@@ -226,10 +238,10 @@ async function askModel(body) {
   else if (['low', 'medium', 'high'].includes(effort)) payload.reasoning = { effort };
 
   const started = Date.now();
-  const call = (p) => fetch(OPENROUTER + '/chat/completions', {
+  const call = (p, useKey) => fetch(OPENROUTER + '/chat/completions', {
     method: 'POST',
     headers: {
-      Authorization: 'Bearer ' + key,
+      Authorization: 'Bearer ' + (useKey || key),
       'Content-Type': 'application/json',
       'HTTP-Referer': 'http://localhost:' + PORT,
       'X-Title': 'Shop Agent (local)',
@@ -247,6 +259,16 @@ async function askModel(body) {
       const { reasoning, ...bare } = payload;
       console.warn('[llm] %s rejected reasoning control — retrying without it', model);
       r = await call(bare);
+      data = await r.json().catch(() => ({}));
+    }
+
+    // Out of OpenRouter credit — drop to the free fallback instead of failing.
+    if (!r.ok && model !== FALLBACK_MODEL
+        && (r.status === 402 || /insufficient credit|out of credit|quota/i.test(JSON.stringify(data.error || '')))) {
+      console.warn('[llm] %s out of credits — retrying on free fallback %s', model, FALLBACK_MODEL);
+      model = FALLBACK_MODEL;
+      payload.model = FALLBACK_MODEL;
+      r = await call(payload, fallbackApiKey());
       data = await r.json().catch(() => ({}));
     }
 
