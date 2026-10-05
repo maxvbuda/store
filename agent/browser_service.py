@@ -22,6 +22,7 @@ import json
 import os
 import pathlib
 import queue
+import subprocess
 import sys
 import threading
 import time
@@ -56,22 +57,6 @@ if DRIVER != "patchright":
     except ImportError:
         pass
 
-# When set, Chromium runs on Kernel's infrastructure (connected over CDP)
-# instead of launching locally. This is what makes the browser deployable at
-# all on a constrained host: no browser binary to install, no --with-deps
-# root/apt problem, no multi-GB memory footprint in this container. Local dev
-# without a Kernel key still launches Chromium locally, unchanged.
-KERNEL_API_KEY = os.environ.get("KERNEL_API_KEY", "").strip()
-_Kernel = None
-if KERNEL_API_KEY:
-    try:
-        from kernel import Kernel as _Kernel
-    except ImportError:
-        print("KERNEL_API_KEY is set but the kernel package isn't installed — "
-              "falling back to local Chromium. Run:  python3 -m pip install kernel",
-              flush=True)
-        KERNEL_API_KEY = ""
-
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROFILE = pathlib.Path(os.environ.get("BROWSER_PROFILE", ROOT / ".data" / "browser-profile"))
 # Our own start page: renders instantly, has no bot check, and tells the user
@@ -86,8 +71,7 @@ START_URL = os.environ.get("BROWSER_START_URL",
 # a restart won't help until the underlying problem (e.g. Chromium missing)
 # is actually fixed. Everything in here is touched by the worker thread only.
 state = {"ctx": None, "page": None, "pw": None, "cdp": None,
-         "last_launch_error": None,
-         "kernel_client": None, "kernel_browser": None}
+         "last_launch_error": None}
 
 # ------------------------------------------------------------ worker queue
 # HTTP handler threads enqueue ops; the worker thread runs them one at a
@@ -249,15 +233,7 @@ def teardown():
                 getattr(obj, close)()
             except Exception:
                 pass
-    # Closing the CDP connection above disconnects us but doesn't reliably
-    # stop the remote session (or its billing) — delete it explicitly.
-    client, kbrowser = state.get("kernel_client"), state.get("kernel_browser")
-    if client is not None and kbrowser is not None:
-        try:
-            client.browsers.delete_by_id(kbrowser.session_id)
-        except Exception as e:
-            print("could not delete Kernel browser session: %s" % str(e)[:120], flush=True)
-    state.update(ctx=None, page=None, pw=None, cdp=None, kernel_client=None, kernel_browser=None)
+    state.update(ctx=None, page=None, pw=None, cdp=None)
 
 
 def _attach_screencast():
@@ -342,6 +318,44 @@ def _clean_start():
             pass
 
 
+def _start_driver():
+    """(worker thread) Start the Playwright driver into state["pw"]."""
+    try:
+        state["pw"] = sync_playwright().start()
+    except Exception as e:
+        # The driver is wedged beyond repair in this process. Exiting is clean:
+        # the Node server notices and spawns a fresh sidecar.
+        print("fatal: playwright would not start (%s) — exiting for a respawn" % e, flush=True)
+        os._exit(3)
+
+
+_install_tried = False
+
+
+def _install_chromium():
+    """(worker thread) Download Playwright's Chromium when it's missing, so the
+    browser works without a separate `playwright install` step. Tried once per
+    process — a failing download shouldn't be retried on every request.
+    Returns True if the install succeeded."""
+    global _install_tried
+    if _install_tried:
+        return False
+    _install_tried = True
+    module = "patchright" if DRIVER == "patchright" else "playwright"
+    print("Chromium is missing — installing it now (one-time, ~1 min)…", flush=True)
+    try:
+        r = subprocess.run([sys.executable, "-m", module, "install", "chromium"],
+                           capture_output=True, text=True, timeout=600)
+    except Exception as e:
+        print("chromium install failed: %s" % str(e)[:160], flush=True)
+        return False
+    if r.returncode != 0:
+        print("chromium install failed: %s" % (r.stderr or r.stdout)[-300:], flush=True)
+        return False
+    print("chromium installed", flush=True)
+    return True
+
+
 def ensure(headless: bool):
     """(worker thread) Start Chromium once; reuse it afterwards."""
     page = state["page"]
@@ -360,45 +374,47 @@ def ensure(headless: bool):
         except Exception:
             pass
         teardown()
-    using_kernel = bool(KERNEL_API_KEY)
-    if not using_kernel:
-        # All of this is local-profile housekeeping — meaningless for a
-        # Kernel browser, which has no on-disk profile in this container.
-        PROFILE.mkdir(parents=True, exist_ok=True)
-        reap_orphans()
-        # A hard-killed Chromium leaves Singleton* behind and the next launch
-        # hangs or refuses. Nothing else is using this profile — we are the
-        # only user.
-        for lockname in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
-            try:
-                (PROFILE / lockname).unlink()
-            except FileNotFoundError:
-                pass
-            except OSError:
-                pass
-        _clean_start()
+    PROFILE.mkdir(parents=True, exist_ok=True)
+    reap_orphans()
+    # A hard-killed Chromium leaves Singleton* behind and the next launch
+    # hangs or refuses. Nothing else is using this profile — we are the
+    # only user.
+    for lockname in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+        try:
+            (PROFILE / lockname).unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+    _clean_start()
+    _start_driver()
     try:
-        state["pw"] = sync_playwright().start()
-    except Exception as e:
-        # The driver is wedged beyond repair in this process. Exiting is clean:
-        # the Node server notices and spawns a fresh sidecar.
-        print("fatal: playwright would not start (%s) — exiting for a respawn" % e, flush=True)
-        os._exit(3)
-    try:
-        state["ctx"] = _launch_kernel(headless) if using_kernel else _launch(headless)
+        state["ctx"] = _launch(headless)
     except Exception as e:
         msg = str(e)
-        if not using_kernel and ("Executable doesn't exist" in msg or "playwright install" in msg):
-            # Without this, the retry path trips Playwright's asyncio guard and
-            # reports "Sync API inside the asyncio loop", which is nonsense here.
+        if ("Executable doesn't exist" in msg or "playwright install" in msg) and _install_chromium():
+            # The binary was missing (a build step that skipped it, or a host
+            # that wiped the cache) and is there now — relaunch on a fresh
+            # driver. Reusing the old one trips Playwright's asyncio guard.
+            teardown()
+            _start_driver()
+            try:
+                state["ctx"] = _launch(headless)
+            except Exception as e2:
+                msg = str(e2)
+                teardown()
+                state["last_launch_error"] = msg[:190]
+                raise
+        elif "Executable doesn't exist" in msg or "playwright install" in msg:
             teardown()
             state["last_launch_error"] = (
-                "Chromium is not installed for Playwright. Run:  "
-                "python3 -m playwright install chromium")
+                "Chromium is not installed for Playwright and the automatic "
+                "install failed. Run:  python3 -m playwright install chromium")
             raise RuntimeError(state["last_launch_error"]) from None
-        teardown()
-        state["last_launch_error"] = ("Kernel: " if using_kernel else "") + msg[:190]
-        raise
+        else:
+            teardown()
+            state["last_launch_error"] = msg[:190]
+            raise
     # Launched cleanly — clear any stale error from a previous failed attempt.
     state["last_launch_error"] = None
     # Own tab is a BRAND-NEW page, never a restored one — so even if the
@@ -444,30 +460,6 @@ def _close_others(keep):
             pg.close()
         except Exception:
             pass
-
-
-def _launch_kernel(headless: bool):
-    """Create a browser on Kernel's infrastructure and connect over CDP,
-    instead of launching Chromium in this process. Returns a BrowserContext,
-    same as _launch(), so ensure() doesn't need to know which path ran.
-
-    No local profile: persistence (cookies/logins across restarts) is
-    Kernel's concern, not ours — BROWSER_PROFILE-based cleanup is skipped
-    entirely by the caller when this path is used.
-    """
-    client = _Kernel(api_key=KERNEL_API_KEY)
-    kbrowser = client.browsers.create(
-        stealth=True, headless=headless,
-        viewport={"width": 1280, "height": 800},
-    )
-    browser = state["pw"].chromium.connect_over_cdp(kbrowser.cdp_ws_url)
-    state["kernel_client"] = client
-    state["kernel_browser"] = kbrowser
-    # Kernel browsers start with a default context/page already open — reuse
-    # it rather than creating a second one alongside it.
-    if browser.contexts:
-        return browser.contexts[0]
-    return browser.new_context(viewport={"width": 1280, "height": 800})
 
 
 def _launch(headless: bool):
@@ -821,8 +813,7 @@ def main():
     ThreadingHTTPServer.allow_reuse_address = True
     srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     srv.headless = args.headless  # ops read this via the handler threads
-    where = "Kernel (remote)" if KERNEL_API_KEY else "local, profile=%s" % PROFILE
-    print(f"browser service on 127.0.0.1:{args.port}  driver={DRIVER}  chromium={where}", flush=True)
+    print(f"browser service on 127.0.0.1:{args.port}  driver={DRIVER}  profile={PROFILE}", flush=True)
     srv.serve_forever()
 
 
