@@ -9,10 +9,9 @@
  * from .env next to this file; edits to .env are picked up on the next request,
  * so you can paste your key and just reload the page.
  *
- * Accounts + sessions live in Supabase Postgres — set SUPABASE_URL and
- * SUPABASE_SERVICE_ROLE_KEY in .env, and run supabase/schema.sql once.
+ * Accounts + sessions live in MongoDB — set MONGODB_URI in .env.
  *
- * Node 18+ (uses the built-in fetch). Dependencies: @supabase/supabase-js.
+ * Node 18+ (uses the built-in fetch). Dependencies: mongodb.
  */
 'use strict';
 
@@ -333,7 +332,7 @@ async function handleCheckStore(req, res) {
 
 // ---------------------------------------------------------------- serve
 
-// Accounts + the shared-password gate. Assigned once Supabase is reachable,
+// Accounts + the shared-password gate. Assigned once MongoDB is reachable,
 // below — request handling never starts until that's done.
 let auth;
 // The agent's Chromium (Python sidecar, spawned on first use).
@@ -485,7 +484,7 @@ server.on('error', (e) => {
 });
 
 (async () => {
-  // Supabase when configured (accounts survive redeploys), the flat-file
+  // MongoDB when configured (accounts survive redeploys), the flat-file
   // store otherwise (zero-setup local dev). lib/auth.js picks.
   auth = await require('./lib/auth').create(env, send, readBody);
 
@@ -495,9 +494,9 @@ server.on('error', (e) => {
     console.log('  app dir : ' + APP_DIR);
     console.log('  env file: ' + ENV_FILE + (fs.existsSync(ENV_FILE) ? '' : '  (missing)'));
     console.log('  API key : ' + (key ? 'set (' + key.length + ' chars)' : 'NOT SET — AI features are off'));
-    console.log('  auth    : ' + (auth.store.file ? 'file (' + auth.store.file + ')' : 'supabase'));
+    console.log('  auth    : ' + (auth.store.file ? 'file (' + auth.store.file + ')' : 'mongodb'));
     // Watchdog before the first await: this callback's promise is unobserved,
-    // so if the count below rejects (a Supabase hiccup at boot, say) anything
+    // so if the count below rejects (a MongoDB hiccup at boot, say) anything
     // after it would be skipped silently — and the watchdog must not be.
     watch.start();
     try {
@@ -514,7 +513,7 @@ server.on('error', (e) => {
   });
 })().catch((e) => {
   console.error('[startup] ' + ((e && e.message) || e));
-  console.error('  If this mentions Supabase: fix SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY');
-  console.error('  in .env, or remove them to use the local file store instead.');
+  console.error('  If this mentions MongoDB: fix MONGODB_URI in .env, or remove it');
+  console.error('  to use the local file store instead.');
   process.exit(1);
 });

@@ -33,9 +33,7 @@ services:
         value: medium
       - key: OPENROUTER_MAX_TOKENS
         value: "4000"
-      # Supabase project's Settings > API page. Run supabase/schema.sql in
-      # the SQL editor once before first use.
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY
+      # mongodb+srv://... from MongoDB Atlas (Connect > Drivers). Atlas
+      # Network Access must allow 0.0.0.0/0 — Render has no fixed egress IP.
+      - key: MONGODB_URI
         sync: false

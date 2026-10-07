@@ -24,8 +24,7 @@ tier — it OOMs at launch and the browser looks "broken" with no useful error.
 |---|---|---|
 | `OPENROUTER_API_KEY` | your key | AI calls. Never commit it. |
 | `APP_PASSWORD` | pick one | **Required on a public URL** — without it `/api/llm` is an open proxy anyone can bill against your key. |
-| `SUPABASE_URL` | from your Supabase project | Accounts that survive redeploys. Run `supabase/schema.sql` in the Supabase SQL editor once first. |
-| `SUPABASE_SERVICE_ROLE_KEY` | from Supabase → API settings | Same. Without these two, accounts fall back to a file and reset on every deploy. |
+| `MONGODB_URI` | `mongodb+srv://...` from Atlas → Connect → Drivers | Accounts that survive redeploys. Without it, accounts fall back to a file and reset on every deploy. In Atlas → Network Access, allow `0.0.0.0/0` — Render has no fixed outbound IP. |
 
 `BROWSER_HEADLESS` is not needed — the server detects a display-less Linux box
 and runs Chromium headless on its own.
@@ -38,7 +37,7 @@ deploy**. To keep those sessions, add a Render Disk mounted at `/data` and set
 `DATA_DIR=/data`: that one variable relocates the accounts file, the error
 log, the agent brief, *and* the browser profile. `BROWSER_PROFILE` remains
 available as an override if the profile alone needs a different path.
-Accounts don't need the disk once Supabase is configured.
+Accounts don't need the disk once MongoDB is configured.
 
 ## If Chromium still fails to launch
 

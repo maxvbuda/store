@@ -5,9 +5,9 @@ npm install
 node server.js          # http://localhost:8787
 ```
 
-Node 18+. Accounts + sessions live in Supabase when `SUPABASE_URL` and
-`SUPABASE_SERVICE_ROLE_KEY` are set in `.env` (run `supabase/schema.sql` in the
-Supabase SQL editor once before first use). With neither set, accounts fall
+Node 18+. Accounts + sessions live in MongoDB when `MONGODB_URI` is set in
+`.env` (collections and indexes are created on first boot — no schema step).
+Without it, accounts fall
 back to a local file in `.data/` — zero setup, right for local dev, but they
 won't survive a redeploy on a host with an ephemeral disk. Deploying? See
 `DEPLOY.md`.
