@@ -352,7 +352,8 @@ process.on('uncaughtException', (err) => {
 
 // Error recording + a watchdog that restarts a wedged browser on its own.
 const watch = require('./lib/watch').create(env, send, readBody, browser);
-const agent = require('./lib/agent').create(env, send, readBody, browser, askModel, watch.record);
+const agent = require('./lib/agent').create(env, send, readBody, browser, askModel, watch.record,
+  { pick: pickModel, fallback: FALLBACK_MODEL });
 process.on('exit', () => browser.stop());
 process.on('SIGINT', () => { browser.stop(); process.exit(0); });
 process.on('SIGTERM', () => { browser.stop(); process.exit(0); });

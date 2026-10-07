@@ -7,6 +7,11 @@
 # computer-use browser at /  — everything else (accounts, the store app, the
 # OpenRouter proxy) runs without it.
 
+# The agent itself: browser-use, open source and run locally. It attaches to
+# the sidecar's Chromium over CDP (agent/browseruse_runner.py), so it works in
+# the same logged-in profile as the live view. AGENT_BACKEND=builtin skips it.
+browser-use==0.13.11
+
 # Browser automation. The sidecar drives a locally-launched Chromium through
 # this.
 playwright==1.61.0

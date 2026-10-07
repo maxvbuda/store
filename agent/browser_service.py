@@ -59,6 +59,8 @@ if DRIVER != "patchright":
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROFILE = pathlib.Path(os.environ.get("BROWSER_PROFILE", ROOT / ".data" / "browser-profile"))
+# Chromium's DevTools port, for the browser-use agent (lib/browseruse.js).
+CDP_PORT = int(os.environ.get("BROWSER_CDP_PORT", "9242"))
 # Our own start page: renders instantly, has no bot check, and tells the user
 # what to do. about:blank was worse than the Cloudflare wall — a blank white
 # rectangle just reads as "the browser is broken".
@@ -473,7 +475,11 @@ def _launch(headless: bool):
         # Without these the profile restores whatever was open last — which is
         # why a page from an earlier test kept coming back on every launch.
         # Cookies and logins still persist; only tab restore is suppressed.
-        args=["--hide-crash-restore-bubble", "--no-first-run", "--no-default-browser-check"],
+        args=["--hide-crash-restore-bubble", "--no-first-run", "--no-default-browser-check",
+              # browser-use (agent/browseruse_runner.py) attaches here to drive
+              # this same Chromium. Loopback only — CDP is full control.
+              "--remote-debugging-address=127.0.0.1",
+              "--remote-debugging-port=%d" % CDP_PORT],
         ignore_default_args=["--restore-last-session"],
     )
     # A residential/mobile proxy is the one thing that defeats Cloudflare on a

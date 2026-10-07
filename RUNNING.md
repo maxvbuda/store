@@ -19,6 +19,12 @@ python3 -m pip install -r requirements.txt
 python3 -m playwright install chromium     # the browser binary; pip won't fetch it
 ```
 
+The agent is [browser-use](https://github.com/browser-use/browser-use), run
+locally — no cloud account. Each goal starts `agent/browseruse_runner.py`,
+which attaches to the sidecar's Chromium over a loopback DevTools port, so it
+works in the same logged-in browser the live view shows. Set
+`AGENT_BACKEND=builtin` (or `longrun`) in `.env` to use another brain.
+
 Everything else — the store app at `/app`, the OpenRouter proxy — works
 without Python.
 
